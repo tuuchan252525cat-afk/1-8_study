@@ -1,0 +1,6 @@
+{
+  "name": "ClassHub - クラス専用学習・情報共有アプリ",
+  "description": "出席番号1〜40番対応・完全プライバシー保護。匿名順位表、成長度ランキング、英単語＆ミゾブルー週テスト、教材共有、学習掲示板。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

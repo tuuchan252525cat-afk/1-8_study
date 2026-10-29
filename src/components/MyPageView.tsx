@@ -259,46 +259,6 @@ export const MyPageView: React.FC = () => {
           </div>
         </div>
       </div>
-
-      {/* 3. Fast Demo Switcher for Evaluation */}
-      <div className="bg-slate-50 rounded-3xl p-5 sm:p-7 border border-slate-200/80">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h3 className="text-sm font-bold text-slate-900">
-              出席番号切り替え（全40人プライバシー検証用）
-            </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              タップすると該当の出席番号の個別画面・プライバシー表示に切り替わります。
-            </p>
-          </div>
-          <span className="text-xs font-semibold text-slate-400">1〜40番</span>
-        </div>
-
-        <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 gap-2 pt-2">
-          {students.map((s) => {
-            const isCurrent = s.attendanceNumber === currentStudent.attendanceNumber;
-            return (
-              <button
-                key={s.attendanceNumber}
-                onClick={() => {
-                  switchStudentDemo(s.attendanceNumber);
-                  setNicknameInput(s.nickname);
-                }}
-                className={`p-2 rounded-xl text-center transition-all cursor-pointer ${
-                  isCurrent
-                    ? 'bg-emerald-600 text-white font-bold shadow-xs scale-105 ring-2 ring-emerald-300'
-                    : 'bg-white hover:bg-emerald-50 text-slate-700 border border-slate-200/80'
-                }`}
-              >
-                <div className="text-xs font-bold">{s.attendanceNumber}番</div>
-                <div className="text-[10px] truncate max-w-[50px] mx-auto opacity-80">
-                  {s.nickname}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
     </div>
   );
 };

@@ -322,7 +322,7 @@ export const MaterialShareView: React.FC = () => {
                     <div className="w-full flex items-center justify-between text-[11px] text-slate-500 pb-2 px-1 border-b border-slate-200/80 mb-3">
                       <span className="flex items-center gap-1 font-semibold text-slate-700">
                         <ImageIcon className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>定期テスト実物問題用紙（JPG・高解像度画像表示）</span>
+                        <span>定期テスト実物問題用紙</span>
                       </span>
                       <span>1 / 2 ページ · A4等倍プレビュー</span>
                     </div>

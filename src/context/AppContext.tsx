@@ -34,6 +34,7 @@ interface AppContextType {
   // Auth & Student State
   students: Student[];
   currentStudent: Student | null;
+  isLoggedIn: boolean;
   login: (attendanceNumber: number, password?: string) => { success: boolean; error?: string };
   logout: () => void;
   updateNickname: (newNickname: string) => void;
@@ -281,6 +282,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } catch {}
   }, [activeTestTitle]);
 
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('classhub_is_logged_in') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('classhub_is_logged_in', String(isLoggedIn));
+    } catch {}
+  }, [isLoggedIn]);
+
   // Auth Functions
   const login = (attendanceNumber: number, password?: string) => {
     if (attendanceNumber < 1 || attendanceNumber > 40) {
@@ -291,18 +306,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return { success: false, error: '指定された出席番号が存在しません' };
     }
 
-    const setPass = passwords[attendanceNumber];
-    if (setPass && password && setPass !== password) {
-      return { success: false, error: 'パスワードが一致しません' };
+    const expectedPass = passwords[attendanceNumber] || '0000';
+    if (!password || password.trim() !== expectedPass) {
+      return { success: false, error: 'パスワードが正しくありません。（初期パスワード: 0000）' };
     }
 
     setCurrentStudentNum(attendanceNumber);
+    setIsLoggedIn(true);
     return { success: true };
   };
 
   const logout = () => {
-    // Keep in session or reset
-    setCurrentStudentNum(0);
+    setIsLoggedIn(false);
+    try {
+      localStorage.removeItem('classhub_is_logged_in');
+    } catch {}
   };
 
   const switchStudentDemo = (attendanceNumber: number) => {
@@ -644,6 +662,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       value={{
         students,
         currentStudent,
+        isLoggedIn,
         login,
         logout,
         updateNickname,

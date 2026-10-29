@@ -7,23 +7,30 @@ import { MaterialShareView } from './components/MaterialShareView';
 import { ForumView } from './components/ForumView';
 import { MyPageView } from './components/MyPageView';
 import { EditManagementView } from './components/EditManagementView';
+import { LoginView } from './components/LoginView';
 
 const AppContent: React.FC = () => {
-  const { currentTab } = useApp();
+  const { currentTab, isLoggedIn } = useApp();
 
   return (
     <div className="min-h-screen bg-[#FAF9F6] text-slate-800 flex flex-col">
       {/* Top Bar & Mobile Navigation */}
       <Navbar />
 
-      {/* Main View Area */}
+      {/* Main View Area (Protected by Login Gate) */}
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-6 pb-24 md:pb-12">
-        {(currentTab === 'home' || currentTab === 'tests') && <ScoreManagementView />}
-        {currentTab === 'quiz' && <WeeklyQuizView />}
-        {currentTab === 'materials' && <MaterialShareView />}
-        {currentTab === 'forum' && <ForumView />}
-        {currentTab === 'mypage' && <MyPageView />}
-        {currentTab === 'edit' && <EditManagementView />}
+        {!isLoggedIn ? (
+          <LoginView />
+        ) : (
+          <>
+            {(currentTab === 'home' || currentTab === 'tests') && <ScoreManagementView />}
+            {currentTab === 'quiz' && <WeeklyQuizView />}
+            {currentTab === 'materials' && <MaterialShareView />}
+            {currentTab === 'forum' && <ForumView />}
+            {currentTab === 'mypage' && <MyPageView />}
+            {currentTab === 'edit' && <EditManagementView />}
+          </>
+        )}
       </main>
 
       {/* Clean, quiet footer */}

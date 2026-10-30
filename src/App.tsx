@@ -13,7 +13,7 @@ const AppContent: React.FC = () => {
   const { currentTab, isLoggedIn } = useApp();
 
   return (
-    <div className="min-h-screen bg-[#FAF9F6] text-slate-800 flex flex-col">
+    <div className="min-h-screen bg-[#c2c3c3] text-slate-800 flex flex-col font-sans">
       {/* Top Bar & Mobile Navigation */}
       <Navbar />
 
@@ -33,17 +33,18 @@ const AppContent: React.FC = () => {
         )}
       </main>
 
-      {/* Clean, quiet footer */}
-      <footer className="border-t border-slate-200/60 bg-white/50 text-slate-400 text-xs py-6 text-center">
-        <div className="max-w-5xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+      {/* Clean festival-inspired quiet footer */}
+      <footer className="border-t border-slate-400/40 bg-[#c2c3c3]/70 text-slate-600 text-xs py-6 text-center">
+        <div className="max-w-5xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-slate-600">ClassHub 3-B</span>
+            <span className="font-extrabold text-slate-700">いちはちさいと</span>
+            <span className="text-[11px] font-bold text-slate-400 tracking-wider">1-8 SITE</span>
             <span aria-hidden="true">·</span>
-            <span>クラス専用学習・情報共有システム</span>
+            <span>1年8組 学習・情報共有ポータル</span>
           </div>
-          <p className="text-[11px] text-slate-400">
-            出席番号1〜40番対応 · 本名不使用 · 全体順位表個人特定完全ゼロ保証
-          </p>
+          <div className="text-[11px] text-slate-400">
+            まなぶことは、つながること。 · 2026
+          </div>
         </div>
       </footer>
     </div>

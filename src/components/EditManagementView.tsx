@@ -159,13 +159,12 @@ export const EditManagementView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Banner / Breadcrumb */}
-      <div className="bg-white rounded-3xl p-5 sm:p-7 border border-slate-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white rounded-3xl p-5 sm:p-7 border border-slate-300/80 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md">
-              /edit 管理画面
+            <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
+              /edit
             </span>
-            <span className="text-xs text-slate-400">URL直接アクセス可能</span>
           </div>
           <h1 className="text-lg font-bold text-slate-900">
             定期テスト一覧 ＆ 小テスト問題編集エディタ
@@ -177,7 +176,7 @@ export const EditManagementView: React.FC = () => {
 
         <button
           onClick={() => setCurrentTab('home')}
-          className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-sm transition-all self-start sm:self-auto cursor-pointer"
+          className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-rose-600 text-white text-xs font-bold shadow-sm transition-all self-start sm:self-auto cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>アプリ画面に戻る</span>
@@ -185,35 +184,35 @@ export const EditManagementView: React.FC = () => {
       </div>
 
       {/* Editor Section Tabs */}
-      <div className="flex items-center p-1 bg-slate-100 rounded-2xl w-fit">
+      <div className="flex items-center p-1 bg-white rounded-2xl w-fit border border-slate-300/80 shadow-2xs">
         <button
           onClick={() => setActiveSection('quizzes')}
-          className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl transition-all ${
+          className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
             activeSection === 'quizzes'
-              ? 'bg-white text-slate-900 shadow-2xs'
+              ? 'bg-slate-900 text-white shadow-2xs'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          <HelpCircle className="w-4 h-4 text-emerald-600" />
+          <HelpCircle className="w-4 h-4 text-emerald-400" />
           <span>小テスト問題編集（英単語・ミゾブルー）</span>
         </button>
 
         <button
           onClick={() => setActiveSection('periodic')}
-          className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl transition-all ${
+          className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
             activeSection === 'periodic'
-              ? 'bg-white text-slate-900 shadow-2xs'
+              ? 'bg-slate-900 text-white shadow-2xs'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          <Calendar className="w-4 h-4 text-sky-600" />
+          <Calendar className="w-4 h-4 text-sky-400" />
           <span>定期テスト（模試）一覧・日程</span>
         </button>
       </div>
 
       {/* Section 1: Quizzes Problem Editor */}
       {activeSection === 'quizzes' && (
-        <div className="bg-white rounded-3xl p-5 sm:p-7 border border-slate-200/80 shadow-xs space-y-6">
+        <div className="bg-white rounded-3xl p-5 sm:p-7 border border-slate-300/80 shadow-md space-y-6">
           {/* Quiz Selector & New Button */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-100">
             <div className="flex-1 max-w-md">

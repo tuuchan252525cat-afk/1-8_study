@@ -1,6 +1,6 @@
 {
-  "name": "ClassHub - クラス専用学習・情報共有アプリ",
-  "description": "出席番号1〜40番対応・完全プライバシー保護。匿名順位表、成長度ランキング、英単語＆ミゾブルー週テスト、教材共有、学習掲示板。",
+  "name": "いちはちさいと (1-8 SITE) - 1年8組 学習・情報共有ポータル",
+  "description": "1年8組専用の学習・情報共有ポータル「いちはちさいと (1-8 SITE)」。完全匿名順位表、成長度ランキング、英単語＆ミゾブルー定期テスト演習、実物問題用紙ビューア、クラス掲示板。",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

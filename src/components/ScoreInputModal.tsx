@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { X, Lock, Check } from 'lucide-react';
+import { X, Lock, Check, Edit3 } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;
@@ -59,13 +59,13 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
 
         <div className="flex items-center gap-2 mb-1">
           <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
-            <Lock className="w-4 h-4" />
+            <Edit3 className="w-4 h-4" />
           </div>
-          <h2 className="text-lg font-bold text-slate-900">非公開の成績入力</h2>
+          <h2 className="text-lg font-bold text-slate-900">成績入力</h2>
         </div>
 
         <p className="text-xs text-slate-500 mb-5 leading-relaxed">
-          入力した点数はあなたの個別画面にのみ表示されます。全体の順位表・分布グラフには名前や番号を完全非公開のまま、点数データのみが匿名集計されます。
+          各教科の得点を入力してください。
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -202,7 +202,7 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
                   保存完了！
                 </>
               ) : (
-                '非公開で保存する'
+                '保存する'
               )}
             </button>
           </div>

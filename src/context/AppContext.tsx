@@ -27,6 +27,7 @@ import {
   calculatePersonalGrowth,
   calculateDistribution,
 } from '../utils/privacyRankings';
+import { getPersistentItem, setPersistentItem, compressImageBase64 } from '../utils/dbStorage';
 
 export type AppTab = 'home' | 'tests' | 'quiz' | 'materials' | 'forum' | 'mypage' | 'edit';
 
@@ -70,9 +71,10 @@ interface AppContextType {
 
   // Study Materials
   materials: StudyMaterial[];
-  addMaterial: (material: Omit<StudyMaterial, 'id' | 'createdAt' | 'downloadCount' | 'authorNickname'>) => void;
+  addMaterial: (material: Omit<StudyMaterial, 'id' | 'createdAt' | 'downloadCount' | 'authorNickname'>) => Promise<void>;
   incrementMaterialDownload: (materialId: string) => void;
   updateMaterial: (materialId: string, updated: Partial<StudyMaterial>) => void;
+  deleteMaterial: (materialId: string) => void;
 
   // Forum (Board)
   posts: ForumPost[];
@@ -99,42 +101,123 @@ const STORAGE_KEYS = {
   ACTIVE_TEST: 'classhub_active_test',
 };
 
+// Helper to check and filter out old mock data
+function filterOutMockData<T extends { id?: string }>(items: T[], mockIdPrefixes: string[]): T[] {
+  if (!Array.isArray(items)) return [];
+  return items.filter((item) => {
+    if (!item || !item.id) return true;
+    return !mockIdPrefixes.some((prefix) => item.id?.startsWith(prefix));
+  });
+}
+
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // 1. Current Student
-  const [students, setStudents] = useState<Student[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.STUDENTS);
-      return saved ? JSON.parse(saved) : INITIAL_STUDENTS;
-    } catch {
-      return INITIAL_STUDENTS;
-    }
-  });
+  // 1. Current Student State
+  const [students, setStudents] = useState<Student[]>(INITIAL_STUDENTS);
+  const [currentStudentNum, setCurrentStudentNum] = useState<number>(1);
+  const [passwords, setPasswords] = useState<Record<number, string>>({});
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
 
-  const [currentStudentNum, setCurrentStudentNum] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.CURRENT_STUDENT_NUM);
-      return saved ? Number(saved) : 12; // Default to Student #12 (ミント)
-    } catch {
-      return 12;
-    }
-  });
+  // 2. Main Content States (Initialized cleanly, loaded async from IndexedDB)
+  const [testRecords, setTestRecords] = useState<TestRecord[]>([]);
+  const [activeTestTitle, setActiveTestTitle] = useState<string>('第1回 定期考査');
+  const [quizzes, setQuizzes] = useState<WeeklyQuiz[]>(INITIAL_QUIZZES);
+  const [quizSubmissions, setQuizSubmissions] = useState<QuizResult[]>([]);
+  const [materials, setMaterials] = useState<StudyMaterial[]>([]);
+  const [posts, setPosts] = useState<ForumPost[]>([]);
 
-  // Passwords storage { [studentNumber]: string }
-  const [passwords, setPasswords] = useState<Record<number, string>>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.PASSWORDS);
-      return saved ? JSON.parse(saved) : { 12: '1212' };
-    } catch {
-      return { 12: '1212' };
-    }
-  });
+  // Async Storage Hydration on Mount (IndexedDB + localStorage)
+  useEffect(() => {
+    let isMounted = true;
+    const hydrateStorage = async () => {
+      try {
+        const savedStudents = await getPersistentItem<Student[]>(STORAGE_KEYS.STUDENTS, INITIAL_STUDENTS);
+        const savedNum = await getPersistentItem<number>(STORAGE_KEYS.CURRENT_STUDENT_NUM, 1);
+        const savedPasses = await getPersistentItem<Record<number, string>>(STORAGE_KEYS.PASSWORDS, {});
+        const savedLoggedIn = await getPersistentItem<boolean>('classhub_is_logged_in', false);
+
+        // Filter out old mock sample records if they exist in storage
+        const rawRecords = await getPersistentItem<TestRecord[]>(STORAGE_KEYS.TEST_RECORDS, INITIAL_TEST_RECORDS);
+        const cleanRecords = filterOutMockData(rawRecords, ['test-2026-10-', 'test-2026-06-']);
+
+        const rawMaterials = await getPersistentItem<StudyMaterial[]>(STORAGE_KEYS.MATERIALS, INITIAL_MATERIALS);
+        const cleanMaterials = filterOutMockData(rawMaterials, ['mat-1', 'mat-2', 'mat-3', 'mat-4', 'mat-5', 'mat-6']);
+
+        const rawPosts = await getPersistentItem<ForumPost[]>(STORAGE_KEYS.POSTS, INITIAL_POSTS);
+        const cleanPosts = filterOutMockData(rawPosts, ['post-1', 'post-2', 'post-3', 'post-4']);
+
+        const rawSubs = await getPersistentItem<QuizResult[]>(STORAGE_KEYS.QUIZ_SUBMISSIONS, INITIAL_QUIZ_SUBMISSIONS);
+        const cleanSubs = filterOutMockData(rawSubs, ['sub-eng-', 'sub-mizo-']);
+
+        const savedActiveTest = await getPersistentItem<string>(STORAGE_KEYS.ACTIVE_TEST, '第1回 定期考査');
+        const savedQuizzes = await getPersistentItem<WeeklyQuiz[]>(STORAGE_KEYS.QUIZZES, INITIAL_QUIZZES);
+
+        if (isMounted) {
+          setStudents(savedStudents);
+          setCurrentStudentNum(savedNum);
+          setPasswords(savedPasses);
+          setIsLoggedIn(savedLoggedIn);
+          setTestRecords(cleanRecords);
+          setMaterials(cleanMaterials);
+          setPosts(cleanPosts);
+          setQuizSubmissions(cleanSubs);
+          setActiveTestTitle(savedActiveTest);
+          setQuizzes(savedQuizzes);
+        }
+      } catch (err) {
+        console.error('Error hydrating storage:', err);
+      }
+    };
+    hydrateStorage();
+    return () => { isMounted = false; };
+  }, []);
+
+  // Persistent State Effects
+  useEffect(() => {
+    setPersistentItem(STORAGE_KEYS.STUDENTS, students);
+  }, [students]);
+
+  useEffect(() => {
+    setPersistentItem(STORAGE_KEYS.CURRENT_STUDENT_NUM, currentStudentNum);
+  }, [currentStudentNum]);
+
+  useEffect(() => {
+    setPersistentItem(STORAGE_KEYS.PASSWORDS, passwords);
+  }, [passwords]);
+
+  useEffect(() => {
+    setPersistentItem('classhub_is_logged_in', isLoggedIn);
+  }, [isLoggedIn]);
+
+  useEffect(() => {
+    setPersistentItem(STORAGE_KEYS.TEST_RECORDS, testRecords);
+  }, [testRecords]);
+
+  useEffect(() => {
+    setPersistentItem(STORAGE_KEYS.QUIZ_SUBMISSIONS, quizSubmissions);
+  }, [quizSubmissions]);
+
+  useEffect(() => {
+    setPersistentItem(STORAGE_KEYS.QUIZZES, quizzes);
+  }, [quizzes]);
+
+  useEffect(() => {
+    setPersistentItem(STORAGE_KEYS.MATERIALS, materials);
+  }, [materials]);
+
+  useEffect(() => {
+    setPersistentItem(STORAGE_KEYS.POSTS, posts);
+  }, [posts]);
+
+  useEffect(() => {
+    setPersistentItem(STORAGE_KEYS.ACTIVE_TEST, activeTestTitle);
+  }, [activeTestTitle]);
 
   // Current logged in student object
   const currentStudent = useMemo(() => {
     return students.find((s) => s.attendanceNumber === currentStudentNum) || null;
   }, [students, currentStudentNum]);
 
-  // 2. Navigation State with URL /edit support
+  // Navigation State
   const [currentTab, setCurrentTabState] = useState<AppTab>(() => {
     if (typeof window !== 'undefined' && window.location.pathname === '/edit') {
       return 'edit';
@@ -164,139 +247,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  // 3. Test Records
-  const [testRecords, setTestRecords] = useState<TestRecord[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.TEST_RECORDS);
-      return saved ? JSON.parse(saved) : INITIAL_TEST_RECORDS;
-    } catch {
-      return INITIAL_TEST_RECORDS;
-    }
-  });
-
-  const availableTestTitles = useMemo(() => {
-    const set = new Set<string>();
-    testRecords.forEach((r) => set.add(r.testTitle));
-    return Array.from(set);
-  }, [testRecords]);
-
-  const [activeTestTitle, setActiveTestTitle] = useState<string>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.ACTIVE_TEST);
-      return saved || '第2回 校内実力模試（10月）';
-    } catch {
-      return '第2回 校内実力模試（10月）';
-    }
-  });
-
-  // 4. Quizzes (now editable & stored)
-  const [quizzes, setQuizzes] = useState<WeeklyQuiz[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.QUIZZES);
-      return saved ? JSON.parse(saved) : INITIAL_QUIZZES;
-    } catch {
-      return INITIAL_QUIZZES;
-    }
-  });
-  const [quizSubmissions, setQuizSubmissions] = useState<QuizResult[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.QUIZ_SUBMISSIONS);
-      return saved ? JSON.parse(saved) : INITIAL_QUIZ_SUBMISSIONS;
-    } catch {
-      return INITIAL_QUIZ_SUBMISSIONS;
-    }
-  });
-
-  // 5. Materials
-  const [materials, setMaterials] = useState<StudyMaterial[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.MATERIALS);
-      return saved ? JSON.parse(saved) : INITIAL_MATERIALS;
-    } catch {
-      return INITIAL_MATERIALS;
-    }
-  });
-
-  // 6. Forum Posts
-  const [posts, setPosts] = useState<ForumPost[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.POSTS);
-      return saved ? JSON.parse(saved) : INITIAL_POSTS;
-    } catch {
-      return INITIAL_POSTS;
-    }
-  });
-
-  // Sync to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(students));
-    } catch {}
-  }, [students]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.CURRENT_STUDENT_NUM, String(currentStudentNum));
-    } catch {}
-  }, [currentStudentNum]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.PASSWORDS, JSON.stringify(passwords));
-    } catch {}
-  }, [passwords]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.TEST_RECORDS, JSON.stringify(testRecords));
-    } catch {}
-  }, [testRecords]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.QUIZ_SUBMISSIONS, JSON.stringify(quizSubmissions));
-    } catch {}
-  }, [quizSubmissions]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.QUIZZES, JSON.stringify(quizzes));
-    } catch {}
-  }, [quizzes]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.MATERIALS, JSON.stringify(materials));
-    } catch {}
-  }, [materials]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.POSTS, JSON.stringify(posts));
-    } catch {}
-  }, [posts]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.ACTIVE_TEST, activeTestTitle);
-    } catch {}
-  }, [activeTestTitle]);
-
-  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('classhub_is_logged_in') === 'true';
-    } catch {
-      return false;
-    }
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('classhub_is_logged_in', String(isLoggedIn));
-    } catch {}
-  }, [isLoggedIn]);
-
-  // Auth Functions
   const login = (attendanceNumber: number, password?: string) => {
     if (attendanceNumber < 1 || attendanceNumber > 40) {
       return { success: false, error: '出席番号は1番〜40番を入力してください' };
@@ -318,9 +268,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const logout = () => {
     setIsLoggedIn(false);
-    try {
-      localStorage.removeItem('classhub_is_logged_in');
-    } catch {}
   };
 
   const switchStudentDemo = (attendanceNumber: number) => {
@@ -357,7 +304,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const total = scores.japanese + scores.math + scores.english + scores.science + scores.social;
 
     setTestRecords((prev) => {
-      // Check if current student already has a record for this test
       const existingIndex = prev.findIndex(
         (r) => r.testTitle === testTitle && r.studentNumber === currentStudentNum
       );
@@ -385,16 +331,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   };
 
-  // Calculations for Active Test
+  const availableTestTitles = useMemo(() => {
+    const set = new Set<string>();
+    if (activeTestTitle) set.add(activeTestTitle);
+    testRecords.forEach((r) => set.add(r.testTitle));
+    if (set.size === 0) set.add('第1回 定期考査');
+    return Array.from(set);
+  }, [testRecords, activeTestTitle]);
+
   const currentTestRecords = useMemo(() => {
     return testRecords.filter((r) => r.testTitle === activeTestTitle);
   }, [testRecords, activeTestTitle]);
 
   const prevTestRecords = useMemo(() => {
-    return testRecords.filter((r) => r.testTitle === '第1回 校内実力模試（6月）');
-  }, [testRecords]);
+    return testRecords.filter((r) => r.testTitle !== activeTestTitle);
+  }, [testRecords, activeTestTitle]);
 
-  // Anonymous Rankings (Strictly No Identifiers)
+  // Anonymous Rankings
   const anonymousRankings = useMemo(() => {
     const items = currentTestRecords.map((r) => ({
       studentNumber: r.studentNumber,
@@ -403,7 +356,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return calculateAnonymousRankings(items);
   }, [currentTestRecords]);
 
-  // Anonymous Growth Rankings (Strictly No Identifiers)
+  // Anonymous Growth Rankings
   const anonymousGrowthRankings = useMemo(() => {
     const prevItems = prevTestRecords.map((r) => ({
       studentNumber: r.studentNumber,
@@ -416,7 +369,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return calculateAnonymousGrowthRankings(prevItems, currItems);
   }, [prevTestRecords, currentTestRecords]);
 
-  // Personal Standing (Visible ONLY to logged in user)
+  // Personal Standing
   const personalStanding = useMemo(() => {
     const items = currentTestRecords.map((r) => ({
       studentNumber: r.studentNumber,
@@ -479,7 +432,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return [newSubmission, ...filtered];
     });
 
-    // Calculate personal standing for this quiz
     const allQuizSubs = quizSubmissions.filter((s) => s.quizId === quizId);
     const updatedSubs = [
       newSubmission,
@@ -514,19 +466,35 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   };
 
-  // Materials
-  const addMaterial = (
+  // Materials with image compression & persistent IndexedDB saving
+  const addMaterial = async (
     material: Omit<StudyMaterial, 'id' | 'createdAt' | 'downloadCount' | 'authorNickname'>
   ) => {
-    const author = currentStudent?.nickname || `出席番号${currentStudentNum}`;
+    const author = currentStudent?.nickname || `出席番号${currentStudentNum}番`;
+
+    let processedImg = material.imageUrl;
+    if (processedImg && processedImg.startsWith('data:image/')) {
+      try {
+        processedImg = await compressImageBase64(processedImg, 1200, 1600, 0.75);
+      } catch (e) {
+        console.warn('Image compression failed, using original', e);
+      }
+    }
+
     const newMat: StudyMaterial = {
       ...material,
-      id: `mat-${Date.now()}`,
+      imageUrl: processedImg,
+      id: `mat-user-${Date.now()}`,
       createdAt: new Date().toISOString().slice(0, 10),
       downloadCount: 0,
       authorNickname: author,
     };
-    setMaterials((prev) => [newMat, ...prev]);
+
+    setMaterials((prev) => {
+      const nextList = [newMat, ...prev];
+      setPersistentItem(STORAGE_KEYS.MATERIALS, nextList);
+      return nextList;
+    });
   };
 
   const incrementMaterialDownload = (materialId: string) => {
@@ -535,12 +503,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     );
   };
 
+  const updateMaterial = (materialId: string, updated: Partial<StudyMaterial>) => {
+    setMaterials((prev) =>
+      prev.map((m) => (m.id === materialId ? { ...m, ...updated } : m))
+    );
+  };
+
+  const deleteMaterial = (materialId: string) => {
+    setMaterials((prev) => prev.filter((m) => m.id !== materialId));
+  };
+
   // Forum
   const addPost = (subjectTag: string, title: string, content: string) => {
     if (!currentStudentNum) return;
-    const author = currentStudent?.nickname || `出席番号${currentStudentNum}`;
+    const author = currentStudent?.nickname || `出席番号${currentStudentNum}番`;
     const newPost: ForumPost = {
-      id: `post-${Date.now()}`,
+      id: `post-user-${Date.now()}`,
       studentNumber: currentStudentNum,
       authorNickname: author,
       subjectTag,
@@ -555,7 +533,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const addComment = (postId: string, content: string) => {
     if (!currentStudentNum || !content.trim()) return;
-    const author = currentStudent?.nickname || `出席番号${currentStudentNum}`;
+    const author = currentStudent?.nickname || `出席番号${currentStudentNum}番`;
     const newComment = {
       id: `c-${Date.now()}`,
       studentNumber: currentStudentNum,
@@ -587,26 +565,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const addPeriodicTest = (title: string, date: string) => {
     const trimmedTitle = title.trim();
     if (!trimmedTitle) return;
-
-    // Seed dummy baseline scores for classmates so rankings calculate immediately
-    const newRecords: TestRecord[] = students.map((s) => {
-      const base = 310 + ((s.attendanceNumber * 19 + 11) % 150);
-      const j = Math.round(base * 0.2);
-      const m = Math.round(base * 0.22);
-      const e = Math.round(base * 0.2);
-      const sc = Math.round(base * 0.19);
-      const so = base - (j + m + e + sc);
-      return {
-        id: `test-${Date.now()}-${s.attendanceNumber}`,
-        testTitle: trimmedTitle,
-        testDate: date || new Date().toISOString().slice(0, 10),
-        studentNumber: s.attendanceNumber,
-        scores: { japanese: j, math: m, english: e, science: sc, social: so },
-        totalScore: base,
-      };
-    });
-
-    setTestRecords((prev) => [...newRecords, ...prev]);
     setActiveTestTitle(trimmedTitle);
   };
 
@@ -651,12 +609,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     );
   };
 
-  const updateMaterial = (materialId: string, updated: Partial<StudyMaterial>) => {
-    setMaterials((prev) =>
-      prev.map((m) => (m.id === materialId ? { ...m, ...updated } : m))
-    );
-  };
-
   return (
     <AppContext.Provider
       value={{
@@ -693,6 +645,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         addMaterial,
         incrementMaterialDownload,
         updateMaterial,
+        deleteMaterial,
         posts,
         addPost,
         addComment,

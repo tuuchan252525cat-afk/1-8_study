@@ -23,7 +23,22 @@ export const ForumView: React.FC = () => {
   const [expandedComments, setExpandedComments] = useState<Record<string, boolean>>({});
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
 
-  const tags = ['すべて', '数学', '英語', '理科', '国語', '社会', '自習・連絡', '質問'];
+  const tags = [
+    'すべて',
+    '国語',
+    '数学',
+    '英語',
+    '地理',
+    '歴史',
+    '生物',
+    '化学',
+    '物理',
+    '家庭',
+    'きみろん',
+    'その他',
+    '自習・連絡',
+    '質問',
+  ];
 
   const filteredPosts =
     activeTag === 'すべて' ? posts : posts.filter((p) => p.subjectTag === activeTag);
@@ -271,11 +286,17 @@ export const ForumView: React.FC = () => {
                   onChange={(e) => setNewTag(e.target.value)}
                   className="w-full text-xs border border-slate-300 rounded-xl p-2.5 bg-slate-50 font-medium focus:border-slate-900 focus:outline-none cursor-pointer"
                 >
+                  <option value="国語">国語</option>
                   <option value="数学">数学</option>
                   <option value="英語">英語</option>
-                  <option value="理科">理科</option>
-                  <option value="国語">国語</option>
-                  <option value="社会">社会</option>
+                  <option value="地理">地理</option>
+                  <option value="歴史">歴史</option>
+                  <option value="生物">生物</option>
+                  <option value="化学">化学</option>
+                  <option value="物理">物理</option>
+                  <option value="家庭">家庭</option>
+                  <option value="きみろん">きみろん</option>
+                  <option value="その他">その他</option>
                   <option value="自習・連絡">自習・連絡</option>
                   <option value="質問">質問</option>
                 </select>

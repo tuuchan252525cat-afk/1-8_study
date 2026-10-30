@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { X, Lock, Check, Edit3 } from 'lucide-react';
+import { X, Check, Edit3 } from 'lucide-react';
+import { ALL_SUBJECTS } from '../constants/subjects';
+import { SubjectScores } from '../types';
 
 interface Props {
   isOpen: boolean;
@@ -13,32 +15,57 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
   const [testTitle, setTestTitle] = useState(availableTestTitles[0] || '第2回 校内実力模試（10月）');
   const [testDate, setTestDate] = useState('2026-10-18');
 
-  // Find existing score for this user if available
-  const existing = testRecords.find(
-    (r) => r.testTitle === testTitle && r.studentNumber === currentStudent?.attendanceNumber
-  );
-
-  const [japanese, setJapanese] = useState<number>(existing?.scores.japanese ?? 84);
-  const [math, setMath] = useState<number>(existing?.scores.math ?? 88);
-  const [english, setEnglish] = useState<number>(existing?.scores.english ?? 90);
-  const [science, setScience] = useState<number>(existing?.scores.science ?? 78);
-  const [social, setSocial] = useState<number>(existing?.scores.social ?? 78);
+  const [subjectScores, setSubjectScores] = useState<SubjectScores>({
+    japanese: 80,
+    math: 85,
+    english: 88,
+    geography: 75,
+    history: 78,
+    biology: 82,
+    chemistry: 80,
+    physics: 76,
+    home: 90,
+    kimiron: 85,
+    other: 80,
+  });
 
   const [savedSuccess, setSavedSuccess] = useState(false);
 
+  // Sync scores when target test selection or testRecords change
+  useEffect(() => {
+    if (!currentStudent) return;
+    const existing = testRecords.find(
+      (r) => r.testTitle === testTitle && r.studentNumber === currentStudent.attendanceNumber
+    );
+    if (existing) {
+      setSubjectScores({
+        japanese: existing.scores.japanese ?? 80,
+        math: existing.scores.math ?? 85,
+        english: existing.scores.english ?? 88,
+        geography: existing.scores.geography ?? 75,
+        history: existing.scores.history ?? 78,
+        biology: existing.scores.biology ?? 82,
+        chemistry: existing.scores.chemistry ?? 80,
+        physics: existing.scores.physics ?? 76,
+        home: existing.scores.home ?? 90,
+        kimiron: existing.scores.kimiron ?? 85,
+        other: existing.scores.other ?? 80,
+      });
+    }
+  }, [testTitle, testRecords, currentStudent]);
+
   if (!isOpen) return null;
 
-  const total = Number(japanese || 0) + Number(math || 0) + Number(english || 0) + Number(science || 0) + Number(social || 0);
+  const handleScoreChange = (key: string, val: number) => {
+    const clamped = Math.max(0, Math.min(100, val));
+    setSubjectScores((prev) => ({ ...prev, [key]: clamped }));
+  };
+
+  const total = Object.values(subjectScores).reduce<number>((acc, v) => acc + (Number(v) || 0), 0);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    saveMyScore(testTitle, testDate, {
-      japanese: Number(japanese),
-      math: Number(math),
-      english: Number(english),
-      science: Number(science),
-      social: Number(social),
-    });
+    saveMyScore(testTitle, testDate, subjectScores);
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);
@@ -47,11 +74,11 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
-      <div className="relative w-full max-w-lg bg-white rounded-3xl p-6 sm:p-7 shadow-xl border border-slate-100">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs overflow-y-auto">
+      <div className="relative w-full max-w-2xl bg-white rounded-3xl p-6 sm:p-7 shadow-xl border border-slate-100 my-8">
         <button
           onClick={onClose}
-          className="absolute top-5 right-5 p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors"
+          className="absolute top-5 right-5 p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
           aria-label="閉じる"
         >
           <X className="w-5 h-5" />
@@ -61,33 +88,20 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
           <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
             <Edit3 className="w-4 h-4" />
           </div>
-          <h2 className="text-lg font-bold text-slate-900">成績入力</h2>
+          <h2 className="text-lg font-bold text-slate-900">定期テスト成績入力（全11教科対応）</h2>
         </div>
 
         <p className="text-xs text-slate-500 mb-5 leading-relaxed">
-          各教科の得点を入力してください。
+          国語 / 数学 / 英語 / 地理 / 歴史 / 生物 / 化学 / 物理 / 家庭 / きみろん / その他の得点を入力してください。
         </p>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-5">
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">対象テスト</label>
             <select
               value={testTitle}
-              onChange={(e) => {
-                const t = e.target.value;
-                setTestTitle(t);
-                const rec = testRecords.find(
-                  (r) => r.testTitle === t && r.studentNumber === currentStudent?.attendanceNumber
-                );
-                if (rec) {
-                  setJapanese(rec.scores.japanese);
-                  setMath(rec.scores.math);
-                  setEnglish(rec.scores.english);
-                  setScience(rec.scores.science);
-                  setSocial(rec.scores.social);
-                }
-              }}
-              className="w-full text-sm border border-slate-200 rounded-xl p-2.5 bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-500"
+              onChange={(e) => setTestTitle(e.target.value)}
+              className="w-full text-sm font-medium border border-slate-200 rounded-xl p-2.5 bg-slate-50 focus:bg-white focus:outline-none focus:border-emerald-500 cursor-pointer"
             >
               {availableTestTitles.map((t) => (
                 <option key={t} value={t}>
@@ -98,7 +112,7 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
             </select>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">実施日</label>
               <input
@@ -109,100 +123,61 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
                 required
               />
             </div>
-            <div className="bg-emerald-50/70 border border-emerald-100 rounded-xl p-2.5 flex flex-col justify-center">
-              <span className="text-[11px] font-medium text-emerald-800">5教科合計点</span>
-              <span className="text-xl font-bold text-emerald-700 tabular-nums">
-                {total} <span className="text-xs font-normal text-emerald-600">/ 500点</span>
+            <div className="bg-emerald-50/80 border border-emerald-100 rounded-xl p-3 flex flex-col justify-center">
+              <span className="text-[11px] font-bold text-emerald-800">全教科総合得点</span>
+              <span className="text-2xl font-black text-emerald-700 tabular-nums">
+                {total} <span className="text-xs font-semibold text-emerald-600">/ 1100点満点</span>
               </span>
             </div>
           </div>
 
-          <div className="space-y-2 pt-1">
-            <span className="text-xs font-semibold text-slate-700">各教科の得点（各100点満点）</span>
-            <div className="grid grid-cols-5 gap-2">
-              <div>
-                <label className="block text-center text-[11px] text-slate-500 mb-1">国語</label>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={japanese}
-                  onChange={(e) => setJapanese(Math.max(0, Math.min(100, Number(e.target.value))))}
-                  className="w-full text-center text-sm font-semibold border border-slate-200 rounded-xl p-2 focus:outline-none focus:border-emerald-500 tabular-nums"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-center text-[11px] text-slate-500 mb-1">数学</label>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={math}
-                  onChange={(e) => setMath(Math.max(0, Math.min(100, Number(e.target.value))))}
-                  className="w-full text-center text-sm font-semibold border border-slate-200 rounded-xl p-2 focus:outline-none focus:border-emerald-500 tabular-nums"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-center text-[11px] text-slate-500 mb-1">英語</label>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={english}
-                  onChange={(e) => setEnglish(Math.max(0, Math.min(100, Number(e.target.value))))}
-                  className="w-full text-center text-sm font-semibold border border-slate-200 rounded-xl p-2 focus:outline-none focus:border-emerald-500 tabular-nums"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-center text-[11px] text-slate-500 mb-1">理科</label>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={science}
-                  onChange={(e) => setScience(Math.max(0, Math.min(100, Number(e.target.value))))}
-                  className="w-full text-center text-sm font-semibold border border-slate-200 rounded-xl p-2 focus:outline-none focus:border-emerald-500 tabular-nums"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-center text-[11px] text-slate-500 mb-1">社会</label>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={social}
-                  onChange={(e) => setSocial(Math.max(0, Math.min(100, Number(e.target.value))))}
-                  className="w-full text-center text-sm font-semibold border border-slate-200 rounded-xl p-2 focus:outline-none focus:border-emerald-500 tabular-nums"
-                  required
-                />
-              </div>
+          <div className="space-y-3 pt-1">
+            <span className="text-xs font-bold text-slate-800 block">
+              各教科の得点（100点満点）
+            </span>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+              {ALL_SUBJECTS.map((subj) => {
+                const val = (subjectScores as Record<string, number | undefined>)[subj.key] ?? 0;
+                return (
+                  <div key={subj.key} className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      {subj.label}
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={val}
+                      onChange={(e) => handleScoreChange(subj.key, Number(e.target.value))}
+                      className="w-full text-center text-sm font-bold border border-slate-300 rounded-lg p-1.5 bg-white focus:outline-none focus:border-emerald-500 tabular-nums"
+                      required
+                    />
+                  </div>
+                );
+              })}
             </div>
           </div>
 
-          <div className="pt-4 flex items-center justify-end gap-3">
+          <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-100">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 text-xs font-semibold text-slate-600 hover:text-slate-800 rounded-xl hover:bg-slate-100 transition-colors"
+              className="px-4 py-2.5 text-xs font-semibold text-slate-600 hover:text-slate-800 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
             >
               キャンセル
             </button>
             <button
               type="submit"
               disabled={savedSuccess}
-              className="px-5 py-2.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition-all flex items-center gap-1.5"
+              className="px-5 py-2.5 text-xs font-bold text-white bg-slate-900 hover:bg-rose-600 rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
             >
               {savedSuccess ? (
                 <>
-                  <Check className="w-4 h-4" />
+                  <Check className="w-4 h-4 text-emerald-400" />
                   保存完了！
                 </>
               ) : (
-                '保存する'
+                '成績を保存する'
               )}
             </button>
           </div>

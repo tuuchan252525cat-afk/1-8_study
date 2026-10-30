@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { StudyMaterial, MaterialSubject } from '../types';
+import { ALL_SUBJECTS, getSubjectLabel } from '../constants/subjects';
 import {
   FileText,
   Image as ImageIcon,
@@ -44,12 +45,7 @@ export const MaterialShareView: React.FC = () => {
 
   const subjectsConfig: { key: MaterialSubject; label: string }[] = [
     { key: 'all', label: 'すべて' },
-    { key: 'japanese', label: '国語' },
-    { key: 'math', label: '数学' },
-    { key: 'english', label: '英語' },
-    { key: 'science', label: '理科' },
-    { key: 'social', label: '社会' },
-    { key: 'other', label: 'その他' },
+    ...ALL_SUBJECTS.map((s) => ({ key: s.key as MaterialSubject, label: s.label })),
   ];
 
   const filteredMaterials =
@@ -429,12 +425,11 @@ export const MaterialShareView: React.FC = () => {
                       onChange={(e) => setNewSubject(e.target.value as MaterialSubject)}
                       className="w-full text-xs border border-slate-300 rounded-xl p-2.5 bg-slate-50 font-medium focus:border-slate-900 focus:outline-none cursor-pointer"
                     >
-                      <option value="japanese">国語</option>
-                      <option value="math">数学</option>
-                      <option value="english">英語</option>
-                      <option value="science">理科</option>
-                      <option value="social">社会</option>
-                      <option value="other">その他</option>
+                      {ALL_SUBJECTS.map((s) => (
+                        <option key={s.key} value={s.key}>
+                          {s.label}
+                        </option>
+                      ))}
                     </select>
                   </div>
 

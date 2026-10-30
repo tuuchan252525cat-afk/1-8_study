@@ -11,6 +11,7 @@ import {
   AnonymousGrowthItem,
   PersonalStanding,
   ScoreDistributionBin,
+  SubjectScores,
 } from '../types';
 import {
   INITIAL_STUDENTS,
@@ -47,7 +48,7 @@ interface AppContextType {
   availableTestTitles: string[];
   activeTestTitle: string;
   setActiveTestTitle: (title: string) => void;
-  saveMyScore: (testTitle: string, testDate: string, scores: { japanese: number; math: number; english: number; science: number; social: number }) => void;
+  saveMyScore: (testTitle: string, testDate: string, scores: SubjectScores) => void;
   addPeriodicTest: (title: string, date: string) => void;
 
   // Privacy Protected Rankings (Public & Personal)
@@ -298,10 +299,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const saveMyScore = (
     testTitle: string,
     testDate: string,
-    scores: { japanese: number; math: number; english: number; science: number; social: number }
+    scores: SubjectScores
   ) => {
     if (!currentStudentNum) return;
-    const total = scores.japanese + scores.math + scores.english + scores.science + scores.social;
+    const total: number = Object.values(scores).reduce<number>(
+      (acc, val) => acc + (Number(val) || 0),
+      0
+    );
 
     setTestRecords((prev) => {
       const existingIndex = prev.findIndex(

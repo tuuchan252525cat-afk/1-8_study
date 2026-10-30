@@ -1,4 +1,15 @@
-export type SubjectKey = 'japanese' | 'math' | 'english' | 'science' | 'social';
+export type SubjectKey =
+  | 'japanese'
+  | 'math'
+  | 'english'
+  | 'geography'
+  | 'history'
+  | 'biology'
+  | 'chemistry'
+  | 'physics'
+  | 'home'
+  | 'kimiron'
+  | 'other';
 
 export interface Student {
   attendanceNumber: number; // 1 to 40
@@ -8,11 +19,18 @@ export interface Student {
 }
 
 export interface SubjectScores {
-  japanese: number;
-  math: number;
-  english: number;
-  science: number;
-  social: number;
+  japanese?: number;
+  math?: number;
+  english?: number;
+  geography?: number;
+  history?: number;
+  biology?: number;
+  chemistry?: number;
+  physics?: number;
+  home?: number;
+  kimiron?: number;
+  other?: number;
+  [key: string]: number | undefined;
 }
 
 export interface TestRecord {
@@ -85,7 +103,19 @@ export interface QuizResult {
   completedAt: string;
 }
 
-export type MaterialSubject = 'all' | 'japanese' | 'math' | 'english' | 'science' | 'social' | 'other';
+export type MaterialSubject =
+  | 'all'
+  | 'japanese'
+  | 'math'
+  | 'english'
+  | 'geography'
+  | 'history'
+  | 'biology'
+  | 'chemistry'
+  | 'physics'
+  | 'home'
+  | 'kimiron'
+  | 'other';
 
 export interface MaterialDocumentSection {
   title: string;

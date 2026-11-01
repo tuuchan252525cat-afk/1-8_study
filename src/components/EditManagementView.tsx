@@ -27,16 +27,20 @@ export const EditManagementView: React.FC = () => {
     materials,
     updateMaterial,
     setCurrentTab,
+    allSubjects,
+    addCustomSubject,
+    deleteCustomSubject,
   } = useApp();
 
-  const [activeSection, setActiveSection] = useState<'quizzes' | 'periodic' | 'materials'>('quizzes');
+  const [activeSection, setActiveSection] = useState<'quizzes' | 'periodic' | 'subjects'>('quizzes');
+  const [newCustomSubjectName, setNewCustomSubjectName] = useState('');
 
   // Quiz Editor State
   const [selectedQuizId, setSelectedQuizId] = useState<string>(quizzes[0]?.id || '');
   const activeQuiz = quizzes.find((q) => q.id === selectedQuizId) || quizzes[0];
 
   const [editTitle, setEditTitle] = useState(activeQuiz?.title || '');
-  const [editCategory, setEditCategory] = useState<'english' | 'mizoblue'>(activeQuiz?.category || 'english');
+  const [editCategory, setEditCategory] = useState<'english' | 'mizoblue' | 'ai_predicted'>(activeQuiz?.category || 'english');
   const [editWeekLabel, setEditWeekLabel] = useState(activeQuiz?.weekLabel || '今週の定期テスト');
   const [editDesc, setEditDesc] = useState(activeQuiz?.description || '');
   const [editDuration, setEditDuration] = useState(activeQuiz?.durationMinutes || 5);
@@ -105,7 +109,7 @@ export const EditManagementView: React.FC = () => {
   // Create new Quiz
   const [isNewQuizOpen, setIsNewQuizOpen] = useState(false);
   const [newQuizTitle, setNewQuizTitle] = useState('');
-  const [newQuizCategory, setNewQuizCategory] = useState<'english' | 'mizoblue'>('mizoblue');
+  const [newQuizCategory, setNewQuizCategory] = useState<'english' | 'mizoblue' | 'ai_predicted'>('mizoblue');
 
   const handleCreateNewQuiz = (e: React.FormEvent) => {
     e.preventDefault();
@@ -158,55 +162,67 @@ export const EditManagementView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Top Banner / Breadcrumb */}
-      <div className="bg-white rounded-3xl p-5 sm:p-7 border border-slate-300/80 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* Top Banner */}
+      <div className="bg-white rounded-3xl p-5 sm:p-7 border border-stone-200/90 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
-              /edit
+            <span className="text-[10px] font-black text-[#1c603a] bg-[#f4f8f5] px-2.5 py-0.5 rounded-full border border-[#1c603a]/20">
+              ◎ MANAGEMENT CONSOLE (/edit)
             </span>
           </div>
-          <h1 className="text-lg font-bold text-slate-900">
+          <h1 className="text-lg sm:text-xl font-black text-slate-900">
             定期テスト一覧 ＆ 小テスト問題編集エディタ
           </h1>
-          <p className="text-xs text-slate-500 mt-0.5">
+          <p className="text-xs text-stone-500 mt-0.5 font-medium">
             英単語・ミゾブルー小テストの問題文・選択肢・解説、および定期テストの登録を編集できます。
           </p>
         </div>
 
         <button
-          onClick={() => setCurrentTab('home')}
-          className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-rose-600 text-white text-xs font-bold shadow-sm transition-all self-start sm:self-auto cursor-pointer"
+          onClick={() => setCurrentTab('portal')}
+          className="flex items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black shadow-xs transition-all self-start sm:self-auto cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>アプリ画面に戻る</span>
+          <span>ポータルに戻る</span>
         </button>
       </div>
 
-      {/* Editor Section Tabs */}
-      <div className="flex items-center p-1 bg-white rounded-2xl w-fit border border-slate-300/80 shadow-2xs">
+      {/* Editor Section Tabs (Modeled on DAY 1 / DAY 2 tabs) */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
         <button
           onClick={() => setActiveSection('quizzes')}
-          className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+          className={`py-3 px-3 rounded-2xl border-2 transition-all cursor-pointer text-center flex items-center justify-center gap-2 ${
             activeSection === 'quizzes'
-              ? 'bg-slate-900 text-white shadow-2xs'
-              : 'text-slate-600 hover:text-slate-900'
+              ? 'border-[#1c603a] bg-[#1c603a] text-white shadow-xs'
+              : 'border-stone-200 bg-white hover:bg-[#fdfbf7] text-slate-800'
           }`}
         >
-          <HelpCircle className="w-4 h-4 text-emerald-400" />
-          <span>小テスト問題編集（英単語・ミゾブルー）</span>
+          <HelpCircle className="w-4 h-4 text-amber-300" />
+          <span className="text-xs font-black">小テスト問題編集</span>
         </button>
 
         <button
           onClick={() => setActiveSection('periodic')}
-          className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+          className={`py-3 px-3 rounded-2xl border-2 transition-all cursor-pointer text-center flex items-center justify-center gap-2 ${
             activeSection === 'periodic'
-              ? 'bg-slate-900 text-white shadow-2xs'
-              : 'text-slate-600 hover:text-slate-900'
+              ? 'border-[#1c603a] bg-[#1c603a] text-white shadow-xs'
+              : 'border-stone-200 bg-white hover:bg-[#fdfbf7] text-slate-800'
           }`}
         >
           <Calendar className="w-4 h-4 text-sky-400" />
-          <span>定期テスト（模試）一覧・日程</span>
+          <span className="text-xs font-black">定期テスト日程一覧</span>
+        </button>
+
+        <button
+          onClick={() => setActiveSection('subjects')}
+          className={`py-3 px-3 rounded-2xl border-2 transition-all cursor-pointer text-center flex items-center justify-center gap-2 ${
+            activeSection === 'subjects'
+              ? 'border-[#1c603a] bg-[#1c603a] text-white shadow-xs'
+              : 'border-stone-200 bg-white hover:bg-[#fdfbf7] text-slate-800'
+          }`}
+        >
+          <BookOpen className="w-4 h-4 text-emerald-300" />
+          <span className="text-xs font-black">教科管理・カスタム追加</span>
         </button>
       </div>
 
@@ -527,6 +543,81 @@ export const EditManagementView: React.FC = () => {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Section 3: Subject Management */}
+      {activeSection === 'subjects' && (
+        <div className="bg-white rounded-3xl p-5 sm:p-7 border border-slate-300/80 shadow-md space-y-6">
+          <div>
+            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <BookOpen className="w-5 h-5 text-amber-500" />
+              <span>登録教科一覧 ＆ カスタム教科追加</span>
+            </h2>
+            <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+              標準教科およびユーザーが自由に追加登録したカスタム教科の一覧です。追加した教科はテスト成績入力・教材共有・学習掲示板のすべてに即座に反映されます。
+            </p>
+          </div>
+
+          {/* Add Form */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!newCustomSubjectName.trim()) return;
+              addCustomSubject(newCustomSubjectName);
+              setNewCustomSubjectName('');
+            }}
+            className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-center gap-3"
+          >
+            <input
+              type="text"
+              placeholder="新規教科名を入力（例: 情報Ⅰ、保健体育、探究、プログラミング）"
+              value={newCustomSubjectName}
+              onChange={(e) => setNewCustomSubjectName(e.target.value)}
+              className="flex-1 w-full text-xs font-semibold border border-slate-300 rounded-xl p-2.5 bg-white focus:outline-none focus:border-slate-900"
+            />
+            <button
+              type="submit"
+              className="w-full sm:w-auto px-5 py-2.5 bg-slate-900 hover:bg-rose-600 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer shrink-0 flex items-center justify-center gap-1.5 shadow-2xs"
+            >
+              <Plus className="w-4 h-4" />
+              <span>新しい教科を登録</span>
+            </button>
+          </form>
+
+          {/* List of Subjects */}
+          <div className="space-y-3">
+            <h3 className="text-xs font-bold text-slate-700">登録済み教科リスト ({allSubjects.length}教科)</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              {allSubjects.map((s) => (
+                <div
+                  key={s.key}
+                  className={`p-3 rounded-2xl border flex items-center justify-between ${
+                    s.isCustom
+                      ? 'bg-amber-50/60 border-amber-200'
+                      : 'bg-white border-slate-200'
+                  }`}
+                >
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 block">{s.label}</span>
+                    <span className="text-[10px] text-slate-400 font-medium">
+                      {s.isCustom ? 'ユーザー追加' : '標準教科'}
+                    </span>
+                  </div>
+                  {s.isCustom && (
+                    <button
+                      type="button"
+                      onClick={() => deleteCustomSubject(s.key)}
+                      className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
+                      title="このカスタム教科を削除"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 

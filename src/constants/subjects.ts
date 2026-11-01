@@ -2,9 +2,10 @@ export interface SubjectOption {
   key: string;
   label: string;
   shortLabel: string;
+  isCustom?: boolean;
 }
 
-export const ALL_SUBJECTS: SubjectOption[] = [
+export const DEFAULT_SUBJECTS: SubjectOption[] = [
   { key: 'japanese', label: '国語', shortLabel: '国' },
   { key: 'math', label: '数学', shortLabel: '数' },
   { key: 'english', label: '英語', shortLabel: '英' },
@@ -17,6 +18,8 @@ export const ALL_SUBJECTS: SubjectOption[] = [
   { key: 'kimiron', label: 'きみろん', shortLabel: 'き' },
   { key: 'other', label: 'その他', shortLabel: '他' },
 ];
+
+export const ALL_SUBJECTS = DEFAULT_SUBJECTS;
 
 export const SUBJECT_MAP: Record<string, string> = {
   japanese: '国語',
@@ -32,6 +35,21 @@ export const SUBJECT_MAP: Record<string, string> = {
   other: 'その他',
 };
 
-export function getSubjectLabel(key: string): string {
-  return SUBJECT_MAP[key] || key || 'その他';
+export function getSubjectLabel(key: string, customSubjects: SubjectOption[] = []): string {
+  if (SUBJECT_MAP[key]) return SUBJECT_MAP[key];
+  const found = customSubjects.find((s) => s.key === key);
+  if (found) return found.label;
+  return key || 'その他';
+}
+
+export function createSubjectOption(name: string): SubjectOption {
+  const trimmed = name.trim();
+  const shortLabel = trimmed.slice(0, 1) || '新';
+  const slugKey = `custom_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  return {
+    key: slugKey,
+    label: trimmed,
+    shortLabel,
+    isCustom: true,
+  };
 }

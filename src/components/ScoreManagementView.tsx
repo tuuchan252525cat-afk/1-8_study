@@ -24,18 +24,18 @@ export const ScoreManagementView: React.FC = () => {
       <PersonalStandingCard onOpenScoreInput={() => setIsModalOpen(true)} />
 
       {/* 2. Main Rankings & Analytics Section */}
-      <div className="bg-white rounded-3xl p-5 sm:p-7 border border-slate-300/80 shadow-md space-y-5">
-        {/* Test Selector and Tab Switcher */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-100">
+      <div className="bg-white rounded-3xl p-5 sm:p-7 border border-stone-200/90 shadow-xs space-y-6">
+        {/* Test Selector and Action */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-stone-100">
           <div>
-            <label className="block text-[11px] font-bold text-slate-500 mb-1">
-              表示中のテスト
-            </label>
+            <span className="block text-[11px] font-black text-stone-400 uppercase tracking-wider mb-1">
+              TARGET TEST
+            </span>
             <div className="flex items-center gap-2">
               <select
                 value={activeTestTitle}
                 onChange={(e) => setActiveTestTitle(e.target.value)}
-                className="text-sm font-extrabold text-slate-900 bg-slate-50 border border-slate-300 rounded-xl py-2 px-3 focus:outline-none focus:border-slate-900 cursor-pointer"
+                className="text-sm font-black text-slate-900 bg-[#fdfbf7] border border-stone-300 rounded-2xl py-2 px-3.5 focus:outline-none focus:border-[#1c603a] cursor-pointer shadow-2xs"
               >
                 {availableTestTitles.map((t) => (
                   <option key={t} value={t}>
@@ -43,79 +43,105 @@ export const ScoreManagementView: React.FC = () => {
                   </option>
                 ))}
               </select>
-              <span className="text-xs text-slate-500 font-semibold">
-                （記録数: {anonymousRankings.length}件）
+              <span className="text-xs text-stone-500 font-bold bg-stone-100 px-2.5 py-1 rounded-xl">
+                {anonymousRankings.length}件の記録
               </span>
             </div>
           </div>
 
-          {/* Functional Segmented Control */}
-          <div className="flex items-center p-1 bg-slate-100 rounded-2xl self-start sm:self-auto border border-slate-200">
-            <button
-              onClick={() => setActiveTab('ranks')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-                activeTab === 'ranks'
-                  ? 'bg-slate-900 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <ListOrdered className="w-3.5 h-3.5" />
-              <span>総合順位表</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('distribution')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-                activeTab === 'distribution'
-                  ? 'bg-slate-900 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <BarChart3 className="w-3.5 h-3.5" />
-              <span>点数分布グラフ</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('growth')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-                activeTab === 'growth'
-                  ? 'bg-slate-900 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <TrendingUp className="w-3.5 h-3.5" />
-              <span>成長度ランキング</span>
-            </button>
-          </div>
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-white border border-stone-300 hover:border-[#1c603a] text-slate-900 hover:text-[#1c603a] text-xs font-black transition-all cursor-pointer shadow-2xs self-start sm:self-auto"
+          >
+            <Plus className="w-4 h-4 text-[#1c603a]" />
+            <span>点数を記録・追加</span>
+          </button>
         </div>
 
-        {/* Tab 1: Anonymous Rankings List */}
+        {/* DAY 1 / DAY 2 Inspired Segmented Tabs (Modeled on 39204_0_b6de3a0e.jpg) */}
+        <div className="grid grid-cols-3 gap-2 sm:gap-3">
+          <button
+            onClick={() => setActiveTab('ranks')}
+            className={`py-3 px-2 sm:px-4 rounded-2xl border-2 transition-all cursor-pointer text-center ${
+              activeTab === 'ranks'
+                ? 'border-[#1c603a] bg-[#1c603a] text-white shadow-xs'
+                : 'border-stone-200 bg-white hover:bg-stone-50 text-slate-700'
+            }`}
+          >
+            <span className="block text-[10px] font-black tracking-wider uppercase opacity-80">
+              TAB 1
+            </span>
+            <span className="block text-xs sm:text-sm font-black mt-0.5 truncate">
+              総合順位表
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('distribution')}
+            className={`py-3 px-2 sm:px-4 rounded-2xl border-2 transition-all cursor-pointer text-center ${
+              activeTab === 'distribution'
+                ? 'border-[#1c603a] bg-[#1c603a] text-white shadow-xs'
+                : 'border-stone-200 bg-white hover:bg-stone-50 text-slate-700'
+            }`}
+          >
+            <span className="block text-[10px] font-black tracking-wider uppercase opacity-80">
+              TAB 2
+            </span>
+            <span className="block text-xs sm:text-sm font-black mt-0.5 truncate">
+              得点分布グラフ
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('growth')}
+            className={`py-3 px-2 sm:px-4 rounded-2xl border-2 transition-all cursor-pointer text-center ${
+              activeTab === 'growth'
+                ? 'border-[#1c603a] bg-[#1c603a] text-white shadow-xs'
+                : 'border-stone-200 bg-white hover:bg-stone-50 text-slate-700'
+            }`}
+          >
+            <span className="block text-[10px] font-black tracking-wider uppercase opacity-80">
+              TAB 3
+            </span>
+            <span className="block text-xs sm:text-sm font-black mt-0.5 truncate">
+              成長度ランキング
+            </span>
+          </button>
+        </div>
+
+        {/* Tab 1: Anonymous Rankings List (Modeled on 39204_0_b6de3a0e.jpg Cards) */}
         {activeTab === 'ranks' && (
           <div>
-            <div className="flex items-center justify-between text-xs text-slate-500 mb-3 px-1 font-semibold">
-              <span className="text-slate-700">総合順位一覧（名前・出席番号は非表示）</span>
-              <span>満点: 500点</span>
+            <div className="flex items-center justify-between text-xs text-stone-500 mb-3 px-1 font-bold">
+              <span className="text-slate-800 flex items-center gap-1">
+                <span>◎ 匿名順位一覧（氏名・出席番号は完全非公開）</span>
+              </span>
+              <span className="text-stone-400">1〜{anonymousRankings.length}位</span>
             </div>
 
             {anonymousRankings.length === 0 ? (
-              <div className="p-8 text-center bg-slate-50/80 rounded-2xl border border-slate-200 space-y-3">
-                <Award className="w-10 h-10 text-slate-400 mx-auto" />
+              <div className="p-8 text-center bg-[#fdfbf7] rounded-3xl border border-stone-200 space-y-3">
+                <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
+                  <Award className="w-6 h-6" />
+                </div>
                 <div>
-                  <p className="text-sm font-bold text-slate-800">
+                  <p className="text-sm font-black text-slate-800">
                     「{activeTestTitle}」の記録がまだありません
                   </p>
-                  <p className="text-xs text-slate-500 mt-1">
-                    「点数を入力・変更」ボタンからテスト結果を記録すると、個人順位や分布が反映されます。
+                  <p className="text-xs text-stone-500 mt-1">
+                    「点数を記録・追加」ボタンからテスト結果を保存すると、全体の順位表が生成されます。
                   </p>
                 </div>
                 <button
                   onClick={() => setIsModalOpen(true)}
-                  className="px-4 py-2 bg-slate-900 hover:bg-rose-600 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                  className="px-5 py-2.5 bg-[#1c603a] hover:bg-[#154a2c] text-white font-black text-xs rounded-2xl transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
                 >
                   <Plus className="w-4 h-4" />
                   <span>点数を記録する</span>
                 </button>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {(() => {
                   let userRankShown = false;
                   return anonymousRankings.map((item, index) => {
@@ -131,56 +157,62 @@ export const ScoreManagementView: React.FC = () => {
                     return (
                       <div
                         key={`rank-${index}-${item.score}`}
-                        className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all ${
+                        className={`p-3.5 sm:p-4 rounded-2xl border transition-all flex items-center gap-3.5 ${
                           isMyScore
-                            ? 'bg-rose-50/80 border-rose-300 ring-1 ring-rose-300/60 shadow-2xs'
-                            : 'bg-slate-50 hover:bg-white border-slate-200'
+                            ? 'bg-[#f4f8f5] border-[#1c603a] ring-2 ring-[#1c603a]/20 shadow-xs'
+                            : 'bg-white hover:bg-[#fdfbf7] border-stone-200/90 shadow-2xs'
                         }`}
                       >
-                        <div className="flex items-center gap-3">
-                          <div
-                            className={`w-8 h-8 rounded-xl flex items-center justify-center font-extrabold text-xs shrink-0 ${
-                              item.rank === 1
-                                ? 'bg-amber-400 text-amber-950 shadow-2xs'
-                                : item.rank === 2
-                                ? 'bg-slate-300 text-slate-800'
-                                : item.rank === 3
-                                ? 'bg-amber-600/30 text-amber-900'
-                                : 'bg-white text-slate-600 border border-slate-300'
-                            }`}
-                          >
-                            {item.rank}
-                          </div>
+                        {/* Left Icon Badge (Marugotosai circle badge) */}
+                        <div
+                          className={`w-11 h-11 rounded-2xl flex flex-col items-center justify-center font-black text-xs shrink-0 shadow-2xs ${
+                            item.rank === 1
+                              ? 'bg-amber-400 text-amber-950 ring-2 ring-amber-300'
+                              : item.rank === 2
+                              ? 'bg-stone-300 text-slate-800'
+                              : item.rank === 3
+                              ? 'bg-amber-700/20 text-amber-900 border border-amber-600/30'
+                              : 'bg-stone-100 text-slate-700 border border-stone-200'
+                          }`}
+                        >
+                          <span className="text-[9px] leading-none opacity-80">RANK</span>
+                          <span className="text-sm font-black leading-none mt-0.5">{item.rank}</span>
+                        </div>
 
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-black text-slate-900 tabular-nums">
-                                {item.score} <span className="text-xs font-normal text-slate-500">点</span>
-                              </span>
-                              {isMyScore && (
-                                <span className="text-[11px] font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded-md">
-                                  あなた
-                                </span>
-                              )}
-                            </div>
-                            <span className="text-[11px] text-slate-400 block mt-0.5 font-medium">
-                              得点率: {Math.round((item.score / 500) * 100)}%
+                        {/* Middle Info */}
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[11px] font-black text-stone-400 uppercase tracking-tight">
+                            TOTAL SCORE
+                          </div>
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-base sm:text-lg font-black text-slate-900 tabular-nums">
+                              {item.score} <span className="text-xs font-bold text-stone-500">点</span>
                             </span>
+                            {isMyScore && (
+                              <span className="text-[10px] font-black text-white bg-[#1c603a] px-2 py-0.5 rounded-full">
+                                あなた
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-stone-500 font-bold mt-0.5 flex items-center gap-1">
+                            <span>◎ 1年8組</span>
+                            <span aria-hidden="true">·</span>
+                            <span>得点率 {Math.round((item.score / 500) * 100)}%</span>
                           </div>
                         </div>
 
                         {/* Score Bar visualization */}
-                        <div className="w-24 sm:w-32 flex flex-col items-end gap-1">
-                          <div className="w-full bg-slate-200/90 h-2 rounded-full overflow-hidden">
+                        <div className="w-20 sm:w-28 flex flex-col items-end gap-1 shrink-0">
+                          <div className="w-full bg-stone-100 h-2.5 rounded-full overflow-hidden p-0.5 border border-stone-200">
                             <div
                               className={`h-full rounded-full transition-all duration-500 ${
                                 isMyScore
-                                  ? 'bg-rose-500'
+                                  ? 'bg-[#1c603a]'
                                   : isTop3
                                   ? 'bg-amber-400'
-                                  : 'bg-slate-500'
+                                  : 'bg-slate-700'
                               }`}
-                              style={{ width: `${(item.score / 500) * 100}%` }}
+                              style={{ width: `${Math.min(100, Math.max(5, (item.score / 500) * 100))}%` }}
                             />
                           </div>
                         </div>
@@ -196,8 +228,8 @@ export const ScoreManagementView: React.FC = () => {
         {/* Tab 2: Score Distribution (Histogram) */}
         {activeTab === 'distribution' && (
           <div className="space-y-4">
-            <div className="text-xs text-slate-500 font-medium">
-              全体の点数帯ごとの人数分布です。自分がどのゾーンに位置しているか客観的に把握できます。
+            <div className="text-xs text-stone-600 font-bold bg-[#fdfbf7] p-3 rounded-2xl border border-stone-200/80">
+              ◎ 全体の点数帯ごとの人数分布です。自分がどのゾーンに位置しているか客観的に把握できます。
             </div>
 
             <div className="space-y-3 pt-2">
@@ -210,23 +242,30 @@ export const ScoreManagementView: React.FC = () => {
                   personalStanding.totalScore <= bin.max;
 
                 return (
-                  <div key={bin.range} className="space-y-1">
-                    <div className="flex items-center justify-between text-xs">
+                  <div
+                    key={bin.range}
+                    className={`p-3.5 rounded-2xl border transition-all ${
+                      isMyBin
+                        ? 'bg-[#f4f8f5] border-[#1c603a] ring-2 ring-[#1c603a]/20'
+                        : 'bg-[#fdfbf7] border-stone-200/80'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-xs mb-1.5">
                       <span
-                        className={`font-bold ${
-                          isMyBin ? 'text-rose-600' : 'text-slate-700'
+                        className={`font-black ${
+                          isMyBin ? 'text-[#1c603a]' : 'text-slate-800'
                         }`}
                       >
-                        {bin.range} {isMyBin && ' (あなたはこのゾーンです)'}
+                        {bin.range} {isMyBin && ' (◎ あなたの得点帯)'}
                       </span>
-                      <span className="font-mono text-slate-500 font-bold">{bin.count}人</span>
+                      <span className="font-mono text-slate-800 font-black text-sm">{bin.count}人</span>
                     </div>
-                    <div className="w-full bg-slate-100 h-3.5 rounded-full overflow-hidden p-0.5 border border-slate-200">
+                    <div className="w-full bg-stone-200/80 h-3.5 rounded-full overflow-hidden p-0.5">
                       <div
                         className={`h-full rounded-full transition-all duration-500 ${
-                          isMyBin ? 'bg-rose-500' : 'bg-slate-700'
+                          isMyBin ? 'bg-[#1c603a]' : 'bg-slate-700'
                         }`}
-                        style={{ width: `${Math.max(percent, 2)}%` }}
+                        style={{ width: `${Math.max(percent, 3)}%` }}
                       />
                     </div>
                   </div>
@@ -239,33 +278,64 @@ export const ScoreManagementView: React.FC = () => {
         {/* Tab 3: Growth Rankings */}
         {activeTab === 'growth' && (
           <div>
-            <div className="text-xs text-slate-500 mb-3 font-semibold">
-              前回テストと比較した全体の得点アップ（伸び率）ランキングです。
+            <div className="text-xs text-stone-600 font-bold bg-[#fdfbf7] p-3 rounded-2xl border border-stone-200/80 mb-3">
+              ◎ 前回テストと比較した全体の得点アップ（伸び率）ランキングです。
             </div>
 
             {anonymousGrowthRankings.length === 0 ? (
-              <div className="p-8 text-center bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
-                <p className="text-sm font-bold text-slate-700">成長度データは集計中です</p>
-                <p className="text-xs text-slate-500">2回以上のテスト結果が記録されると自動で伸び率が計算されます。</p>
+              <div className="p-8 text-center bg-[#fdfbf7] rounded-3xl border border-stone-200 space-y-2">
+                <p className="text-sm font-black text-slate-800">成長度データは集計中です</p>
+                <p className="text-xs text-stone-500">2回以上のテスト結果が記録されると自動で伸び率が計算されます。</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                {anonymousGrowthRankings.map((item, idx) => (
-                  <div
-                    key={`growth-${idx}`}
-                    className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="w-7 h-7 rounded-xl bg-emerald-100 text-emerald-800 text-xs font-bold flex items-center justify-center">
-                        {item.rank}
-                      </span>
-                      <span className="text-xs font-bold text-slate-800">
-                        {item.delta > 0 ? `+${item.delta}` : item.delta} 点アップ
-                      </span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {anonymousGrowthRankings.map((item, index) => {
+                  const isMyGrowth =
+                    personalStanding.growthRank !== null &&
+                    personalStanding.growthRank === item.rank &&
+                    personalStanding.growthDelta === item.delta;
+
+                  return (
+                    <div
+                      key={`growth-${index}`}
+                      className={`p-3.5 sm:p-4 rounded-2xl border transition-all flex items-center justify-between ${
+                        isMyGrowth
+                          ? 'bg-[#f4f8f5] border-[#1c603a] ring-2 ring-[#1c603a]/20 shadow-xs'
+                          : 'bg-white hover:bg-[#fdfbf7] border-stone-200/90 shadow-2xs'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`w-10 h-10 rounded-2xl flex flex-col items-center justify-center font-black text-xs shrink-0 ${
+                            item.rank === 1
+                              ? 'bg-emerald-500 text-white shadow-2xs'
+                              : 'bg-stone-100 text-slate-700 border border-stone-200'
+                          }`}
+                        >
+                          <span className="text-[9px] leading-none opacity-80">UP</span>
+                          <span className="text-xs font-black leading-none mt-0.5">{item.rank}位</span>
+                        </div>
+
+                        <div>
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="text-base font-black text-[#1c603a] tabular-nums">
+                              +{item.delta}
+                            </span>
+                            <span className="text-xs font-bold text-stone-500">点アップ</span>
+                            {isMyGrowth && (
+                              <span className="text-[10px] font-black text-white bg-[#1c603a] px-2 py-0.5 rounded-full ml-1">
+                                あなた
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-stone-500 font-bold block mt-0.5">
+                            ◎ 前回模試からの向上スコア
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <span className="text-[11px] text-slate-400 font-medium">前回の結果と比較</span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -273,7 +343,7 @@ export const ScoreManagementView: React.FC = () => {
       </div>
 
       {/* Score Input Modal */}
-      <ScoreInputModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} />
+      {isModalOpen && <ScoreInputModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} />}
     </div>
   );
 };

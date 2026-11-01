@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { BarChart2, BookOpen, FolderDown, MessageSquare, User, Edit3, LogOut } from 'lucide-react';
+import { BarChart2, BookOpen, FolderDown, MessageSquare, User, Edit3, LogOut, Sparkles } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
   const { currentTab, setCurrentTab, currentStudent, logout, isLoggedIn } = useApp();
@@ -16,10 +16,10 @@ export const Navbar: React.FC = () => {
               1-8
             </div>
             <button
-              onClick={() => setCurrentTab('home')}
+              onClick={() => setCurrentTab('portal')}
               className="text-left group cursor-pointer focus:outline-none flex items-baseline gap-1.5"
             >
-              <span className="font-extrabold text-base sm:text-lg tracking-tight text-slate-900 group-hover:text-rose-600 transition-colors whitespace-nowrap">
+              <span className="font-extrabold text-base sm:text-lg tracking-tight text-slate-900 group-hover:text-emerald-700 transition-colors whitespace-nowrap">
                 いちはちさいと
               </span>
               <span className="hidden sm:inline-block text-[11px] font-bold text-slate-600 tracking-wider">
@@ -28,13 +28,24 @@ export const Navbar: React.FC = () => {
             </button>
           </div>
 
-          {/* Zone 2: Navigation Links (fits completely on screen, marugotosai inspired) */}
+          {/* Zone 2: Navigation Links */}
           {isLoggedIn && (
-            <nav className="hidden md:flex items-center gap-1.5 lg:gap-2.5 text-xs sm:text-sm font-semibold text-slate-600">
+            <nav className="hidden md:flex items-center gap-1.5 lg:gap-2 text-xs sm:text-sm font-semibold text-slate-600">
+              <button
+                onClick={() => setCurrentTab('portal')}
+                className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+                  currentTab === 'portal'
+                    ? 'bg-slate-900 text-white font-bold shadow-2xs'
+                    : 'hover:text-slate-900 hover:bg-slate-100'
+                }`}
+              >
+                ポータル
+              </button>
+
               <button
                 onClick={() => setCurrentTab('home')}
                 className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                  currentTab === 'home' || currentTab === 'tests'
+                  currentTab === 'home' || currentTab === 'tests' || currentTab === 'scores'
                     ? 'bg-slate-900 text-white font-bold shadow-2xs'
                     : 'hover:text-slate-900 hover:bg-slate-100'
                 }`}
@@ -51,6 +62,18 @@ export const Navbar: React.FC = () => {
                 }`}
               >
                 定期テスト
+              </button>
+
+              <button
+                onClick={() => setCurrentTab('ai_analyzer')}
+                className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1 ${
+                  currentTab === 'ai_analyzer'
+                    ? 'bg-slate-900 text-amber-400 font-bold shadow-2xs'
+                    : 'hover:text-slate-900 hover:bg-slate-100 text-slate-800 font-bold'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                <span>AI傾向分析</span>
               </button>
 
               <button
@@ -139,57 +162,79 @@ export const Navbar: React.FC = () => {
       {isLoggedIn && (
         <nav
           aria-label="モバイルナビゲーション"
-          className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200/80 shadow-[0_-2px_10px_rgba(0,0,0,0.03)]"
+          className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-stone-200/90 shadow-[0_-2px_10px_rgba(0,0,0,0.04)]"
         >
-          <div className="grid grid-cols-5 items-center h-16 max-w-md mx-auto px-2">
+          <div className="grid grid-cols-7 items-center h-16 max-w-lg mx-auto px-1">
+            <button
+              onClick={() => setCurrentTab('portal')}
+              className={`flex flex-col items-center justify-center h-full min-h-[44px] transition-colors cursor-pointer ${
+                currentTab === 'portal' ? 'text-[#1c603a] font-black' : 'text-stone-500 hover:text-slate-800'
+              }`}
+            >
+              <div className={`p-1 rounded-full ${currentTab === 'portal' ? 'bg-[#1c603a]/10' : ''}`}>
+                <span className="text-sm">🏠</span>
+              </div>
+              <span className="text-[8px] font-black mt-0.5">ポータル</span>
+            </button>
+
             <button
               onClick={() => setCurrentTab('home')}
               className={`flex flex-col items-center justify-center h-full min-h-[44px] transition-colors cursor-pointer ${
-                currentTab === 'home' || currentTab === 'tests' ? 'text-rose-600 font-bold' : 'text-slate-500 hover:text-slate-800'
+                currentTab === 'home' || currentTab === 'tests' || currentTab === 'scores' ? 'text-[#1c603a] font-black' : 'text-stone-500 hover:text-slate-800'
               }`}
             >
-              <BarChart2 className="w-5 h-5 mb-0.5" />
-              <span className="text-[10px]">順位・成績</span>
+              <BarChart2 className="w-4 h-4 mb-0.5" />
+              <span className="text-[8px] font-bold">順位成績</span>
             </button>
 
             <button
               onClick={() => setCurrentTab('quiz')}
               className={`flex flex-col items-center justify-center h-full min-h-[44px] transition-colors cursor-pointer ${
-                currentTab === 'quiz' ? 'text-rose-600 font-bold' : 'text-slate-500 hover:text-slate-800'
+                currentTab === 'quiz' ? 'text-[#1c603a] font-black' : 'text-stone-500 hover:text-slate-800'
               }`}
             >
-              <BookOpen className="w-5 h-5 mb-0.5" />
-              <span className="text-[10px]">定期テスト</span>
+              <BookOpen className="w-4 h-4 mb-0.5" />
+              <span className="text-[8px] font-bold">定期テスト</span>
+            </button>
+
+            <button
+              onClick={() => setCurrentTab('ai_analyzer')}
+              className={`flex flex-col items-center justify-center h-full min-h-[44px] transition-colors cursor-pointer ${
+                currentTab === 'ai_analyzer' ? 'text-[#1c603a] font-black' : 'text-stone-600 hover:text-slate-900 font-bold'
+              }`}
+            >
+              <Sparkles className="w-4 h-4 mb-0.5 text-amber-500" />
+              <span className="text-[8px] font-bold">AI分析</span>
             </button>
 
             <button
               onClick={() => setCurrentTab('materials')}
               className={`flex flex-col items-center justify-center h-full min-h-[44px] transition-colors cursor-pointer ${
-                currentTab === 'materials' ? 'text-rose-600 font-bold' : 'text-slate-500 hover:text-slate-800'
+                currentTab === 'materials' ? 'text-[#1c603a] font-black' : 'text-stone-500 hover:text-slate-800'
               }`}
             >
-              <FolderDown className="w-5 h-5 mb-0.5" />
-              <span className="text-[10px]">教材共有</span>
+              <FolderDown className="w-4 h-4 mb-0.5" />
+              <span className="text-[8px] font-bold">教材共有</span>
             </button>
 
             <button
               onClick={() => setCurrentTab('forum')}
               className={`flex flex-col items-center justify-center h-full min-h-[44px] transition-colors cursor-pointer ${
-                currentTab === 'forum' ? 'text-rose-600 font-bold' : 'text-slate-500 hover:text-slate-800'
+                currentTab === 'forum' ? 'text-[#1c603a] font-black' : 'text-stone-500 hover:text-slate-800'
               }`}
             >
-              <MessageSquare className="w-5 h-5 mb-0.5" />
-              <span className="text-[10px]">掲示板</span>
+              <MessageSquare className="w-4 h-4 mb-0.5" />
+              <span className="text-[8px] font-bold">掲示板</span>
             </button>
 
             <button
               onClick={() => setCurrentTab('mypage')}
               className={`flex flex-col items-center justify-center h-full min-h-[44px] transition-colors cursor-pointer ${
-                currentTab === 'mypage' ? 'text-rose-600 font-bold' : 'text-slate-500 hover:text-slate-800'
+                currentTab === 'mypage' ? 'text-[#1c603a] font-black' : 'text-stone-500 hover:text-slate-800'
               }`}
             >
-              <User className="w-5 h-5 mb-0.5" />
-              <span className="text-[10px]">マイページ</span>
+              <User className="w-4 h-4 mb-0.5" />
+              <span className="text-[8px] font-bold">マイページ</span>
             </button>
           </div>
         </nav>

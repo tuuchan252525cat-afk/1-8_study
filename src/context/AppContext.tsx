@@ -29,8 +29,9 @@ import {
   calculateDistribution,
 } from '../utils/privacyRankings';
 import { getPersistentItem, setPersistentItem, compressImageBase64 } from '../utils/dbStorage';
+import { SubjectOption, DEFAULT_SUBJECTS, createSubjectOption } from '../constants/subjects';
 
-export type AppTab = 'home' | 'tests' | 'quiz' | 'materials' | 'forum' | 'mypage' | 'edit';
+export type AppTab = 'portal' | 'home' | 'scores' | 'tests' | 'quiz' | 'ai_analyzer' | 'materials' | 'forum' | 'mypage' | 'edit';
 
 interface AppContextType {
   // Auth & Student State
@@ -42,6 +43,12 @@ interface AppContextType {
   updateNickname: (newNickname: string) => void;
   updatePassword: (password: string) => void;
   switchStudentDemo: (attendanceNumber: number) => void;
+
+  // Custom Subjects Management
+  customSubjects: SubjectOption[];
+  allSubjects: SubjectOption[];
+  addCustomSubject: (name: string) => SubjectOption;
+  deleteCustomSubject: (key: string) => void;
 
   // Test & Score Management
   testRecords: TestRecord[];
@@ -100,6 +107,7 @@ const STORAGE_KEYS = {
   POSTS: 'classhub_posts',
   PASSWORDS: 'classhub_passwords',
   ACTIVE_TEST: 'classhub_active_test',
+  CUSTOM_SUBJECTS: 'classhub_custom_subjects',
 };
 
 // Helper to check and filter out old mock data
@@ -119,6 +127,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
 
   // 2. Main Content States (Initialized cleanly, loaded async from IndexedDB)
+  const [customSubjects, setCustomSubjects] = useState<SubjectOption[]>([]);
   const [testRecords, setTestRecords] = useState<TestRecord[]>([]);
   const [activeTestTitle, setActiveTestTitle] = useState<string>('第1回 定期考査');
   const [quizzes, setQuizzes] = useState<WeeklyQuiz[]>(INITIAL_QUIZZES);
@@ -151,6 +160,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         const savedActiveTest = await getPersistentItem<string>(STORAGE_KEYS.ACTIVE_TEST, '第1回 定期考査');
         const savedQuizzes = await getPersistentItem<WeeklyQuiz[]>(STORAGE_KEYS.QUIZZES, INITIAL_QUIZZES);
+        const savedCustomSubjects = await getPersistentItem<SubjectOption[]>(STORAGE_KEYS.CUSTOM_SUBJECTS, []);
 
         if (isMounted) {
           setStudents(savedStudents);
@@ -163,6 +173,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setQuizSubmissions(cleanSubs);
           setActiveTestTitle(savedActiveTest);
           setQuizzes(savedQuizzes);
+          setCustomSubjects(savedCustomSubjects);
         }
       } catch (err) {
         console.error('Error hydrating storage:', err);
@@ -213,6 +224,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setPersistentItem(STORAGE_KEYS.ACTIVE_TEST, activeTestTitle);
   }, [activeTestTitle]);
 
+  useEffect(() => {
+    setPersistentItem(STORAGE_KEYS.CUSTOM_SUBJECTS, customSubjects);
+  }, [customSubjects]);
+
   // Current logged in student object
   const currentStudent = useMemo(() => {
     return students.find((s) => s.attendanceNumber === currentStudentNum) || null;
@@ -223,7 +238,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (typeof window !== 'undefined' && window.location.pathname === '/edit') {
       return 'edit';
     }
-    return 'home';
+    return 'portal';
   });
 
   const setCurrentTab = (tab: AppTab) => {
@@ -294,6 +309,34 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       prev.map((s) => (s.attendanceNumber === currentStudentNum ? { ...s, hasCustomPassword: true } : s))
     );
   };
+
+  // Custom Subjects Management
+  const addCustomSubject = (name: string): SubjectOption => {
+    const trimmed = name.trim();
+    if (!trimmed) return createSubjectOption('新規教科');
+
+    const existingCustom = customSubjects.find(
+      (s) => s.label.toLowerCase() === trimmed.toLowerCase()
+    );
+    if (existingCustom) return existingCustom;
+
+    const existingDefault = DEFAULT_SUBJECTS.find(
+      (s) => s.label.toLowerCase() === trimmed.toLowerCase()
+    );
+    if (existingDefault) return existingDefault;
+
+    const newSubj = createSubjectOption(trimmed);
+    setCustomSubjects((prev) => [...prev, newSubj]);
+    return newSubj;
+  };
+
+  const deleteCustomSubject = (key: string) => {
+    setCustomSubjects((prev) => prev.filter((s) => s.key !== key));
+  };
+
+  const allSubjects = useMemo(() => {
+    return [...DEFAULT_SUBJECTS, ...customSubjects];
+  }, [customSubjects]);
 
   // Score Management
   const saveMyScore = (
@@ -624,6 +667,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         updateNickname,
         updatePassword,
         switchStudentDemo,
+        customSubjects,
+        allSubjects,
+        addCustomSubject,
+        deleteCustomSubject,
         testRecords,
         availableTestTitles,
         activeTestTitle,

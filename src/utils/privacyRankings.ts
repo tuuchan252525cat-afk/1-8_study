@@ -239,9 +239,9 @@ export function calculateDistribution(
   if (!scores || scores.length === 0) return [];
 
   const total = scores.length;
+  const targetMax = maxScore > 0 ? maxScore : 500;
 
-  if (maxScore <= 100) {
-    // 10-point buckets for 100 max
+  if (targetMax <= 100) {
     const binsConfig = [
       { range: '90 - 100点', min: 90, max: 100 },
       { range: '80 - 89点', min: 80, max: 89 },
@@ -261,14 +261,20 @@ export function calculateDistribution(
     });
   }
 
-  // 50-point buckets for 500 max
+  // Dynamic 6-tier distribution for variable total scores
+  const p90 = Math.round(targetMax * 0.9);
+  const p80 = Math.round(targetMax * 0.8);
+  const p70 = Math.round(targetMax * 0.7);
+  const p60 = Math.round(targetMax * 0.6);
+  const p50 = Math.round(targetMax * 0.5);
+
   const binsConfig = [
-    { range: '450 - 500点', min: 450, max: 500 },
-    { range: '400 - 449点', min: 400, max: 449 },
-    { range: '350 - 399点', min: 350, max: 399 },
-    { range: '300 - 349点', min: 300, max: 349 },
-    { range: '250 - 299点', min: 250, max: 299 },
-    { range: '0 - 249点', min: 0, max: 249 },
+    { range: `${p90} - ${targetMax}点`, min: p90, max: targetMax },
+    { range: `${p80} - ${p90 - 1}点`, min: p80, max: p90 - 1 },
+    { range: `${p70} - ${p80 - 1}点`, min: p70, max: p80 - 1 },
+    { range: `${p60} - ${p70 - 1}点`, min: p60, max: p70 - 1 },
+    { range: `${p50} - ${p60 - 1}点`, min: p50, max: p60 - 1 },
+    { range: `0 - ${p50 - 1}点`, min: 0, max: p50 - 1 },
   ];
 
   return binsConfig.map((b) => {

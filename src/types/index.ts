@@ -83,14 +83,36 @@ export interface QuizQuestion {
   explanation: string;
 }
 
+export interface AiTrendAnalysis {
+  subject: string;
+  unit: string;
+  keywords: string[];
+  trends: string[];
+}
+
+export interface AiPredictedQuestion {
+  id: number;
+  question: string;
+  options: string[];
+  correct_index: number;
+  explanation: string;
+}
+
+export interface AiAnalysisResult {
+  analysis: AiTrendAnalysis;
+  predicted_questions: AiPredictedQuestion[];
+}
+
 export interface WeeklyQuiz {
   id: string;
   title: string;
-  category: 'english' | 'mizoblue';
+  category: 'english' | 'mizoblue' | 'ai_predicted';
   weekLabel: string;
   description: string;
   durationMinutes: number;
   questions: QuizQuestion[];
+  createdAuthor?: string;
+  aiAnalysisSummary?: AiTrendAnalysis;
 }
 
 export interface QuizResult {
@@ -103,19 +125,7 @@ export interface QuizResult {
   completedAt: string;
 }
 
-export type MaterialSubject =
-  | 'all'
-  | 'japanese'
-  | 'math'
-  | 'english'
-  | 'geography'
-  | 'history'
-  | 'biology'
-  | 'chemistry'
-  | 'physics'
-  | 'home'
-  | 'kimiron'
-  | 'other';
+export type MaterialSubject = 'all' | string;
 
 export interface MaterialDocumentSection {
   title: string;

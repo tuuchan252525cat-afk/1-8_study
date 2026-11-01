@@ -1,31 +1,63 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { BarChart2, BookOpen, FolderDown, MessageSquare, User, Edit3, LogOut, Sparkles } from 'lucide-react';
+import { BarChart2, BookOpen, FolderDown, MessageSquare, User, Edit3, LogOut, Sparkles, ChevronLeft } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
   const { currentTab, setCurrentTab, currentStudent, logout, isLoggedIn } = useApp();
+
+  const getPageTitle = () => {
+    switch (currentTab) {
+      case 'home':
+      case 'scores':
+      case 'tests':
+        return '成績・順位';
+      case 'quiz':
+        return '定期テスト';
+      case 'ai_analyzer':
+        return 'AI傾向分析';
+      case 'materials':
+        return '教材共有';
+      case 'forum':
+        return 'クラス掲示板';
+      case 'mypage':
+        return 'マイページ';
+      case 'edit':
+        return '問題編集 (/edit)';
+      default:
+        return 'ポータル';
+    }
+  };
 
   return (
     <>
       {/* Top Bar for Desktop & Tablet */}
       <header className="sticky top-0 z-30 bg-[#c2c3c3]/95 backdrop-blur-md border-b border-slate-400/50 shadow-2xs">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 sm:gap-4 bg-[#c2c3c3]">
-          {/* Zone 1: Brand wordmark (Compact & single line) */}
+          {/* Zone 1: Back Button & Page Title (Topmost Element) */}
           <div className="flex items-center gap-2.5 shrink-0">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-rose-500 via-amber-500 to-teal-500 flex items-center justify-center text-white font-black text-xs shadow-2xs">
-              1-8
-            </div>
-            <button
-              onClick={() => setCurrentTab('portal')}
-              className="text-left group cursor-pointer focus:outline-none flex items-baseline gap-1.5"
-            >
-              <span className="font-extrabold text-base sm:text-lg tracking-tight text-slate-900 group-hover:text-emerald-700 transition-colors whitespace-nowrap">
-                いちはちさいと
-              </span>
-              <span className="hidden sm:inline-block text-[11px] font-bold text-slate-600 tracking-wider">
-                1-8 SITE
-              </span>
-            </button>
+            {currentTab !== 'portal' ? (
+              <div className="flex items-center gap-2 sm:gap-3">
+                <button
+                  onClick={() => setCurrentTab('portal')}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white hover:bg-stone-100 text-slate-800 text-xs sm:text-sm font-black transition-all cursor-pointer border border-stone-300 shadow-2xs shrink-0"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  <span>戻る</span>
+                </button>
+                <h1 className="text-base sm:text-lg font-black text-slate-900 tracking-tight truncate">
+                  {getPageTitle()}
+                </h1>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-[#1c603a] text-white flex items-center justify-center font-black text-xs shadow-2xs">
+                  1-8
+                </div>
+                <span className="font-black text-base sm:text-lg tracking-tight text-slate-900">
+                  ポータル
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Zone 2: Navigation Links */}

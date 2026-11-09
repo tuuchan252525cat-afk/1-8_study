@@ -91,7 +91,7 @@ const AppContent: React.FC = () => {
             <span>1年8組 学習・情報共有ポータル</span>
           </div>
           <div className="text-[11px] text-slate-500 font-bold">
-            まなぶことは、つながること。 · 2026
+            2026
           </div>
         </div>
       </footer>

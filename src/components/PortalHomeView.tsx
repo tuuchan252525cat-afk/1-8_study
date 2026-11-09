@@ -78,10 +78,6 @@ export const PortalHomeView: React.FC = () => {
             <span className="text-lg font-bold text-amber-300 align-super">2026</span>
           </h1>
 
-          <p className="text-xs sm:text-sm font-semibold text-emerald-100/90 mt-2 tracking-wide">
-            まなぶことは、つながること。
-          </p>
-
           {currentStudent && (
             <div className="mt-4 inline-flex items-center gap-2 bg-white/15 px-3.5 py-1.5 rounded-2xl backdrop-blur-xs text-xs font-extrabold text-white">
               <span

@@ -32,9 +32,6 @@ export const LoginView: React.FC = () => {
               </span>
               <span className="text-[10px] font-black text-amber-300">2026</span>
             </div>
-            <div className="text-[9px] text-emerald-100 font-bold tracking-wider mt-0.5">
-              まなぶことは、つながること。
-            </div>
           </div>
 
           <div className="space-y-0.5 pt-2">

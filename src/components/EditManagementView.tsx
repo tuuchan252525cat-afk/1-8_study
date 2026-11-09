@@ -41,7 +41,7 @@ export const EditManagementView: React.FC = () => {
 
   const [editTitle, setEditTitle] = useState(activeQuiz?.title || '');
   const [editCategory, setEditCategory] = useState<'english' | 'mizoblue' | 'ai_predicted'>(activeQuiz?.category || 'english');
-  const [editWeekLabel, setEditWeekLabel] = useState(activeQuiz?.weekLabel || '今週の定期テスト');
+  const [editWeekLabel, setEditWeekLabel] = useState(activeQuiz?.weekLabel || '今週の小テスト');
   const [editDesc, setEditDesc] = useState(activeQuiz?.description || '');
   const [editDuration, setEditDuration] = useState(activeQuiz?.durationMinutes || 5);
   const [editQuestions, setEditQuestions] = useState<QuizQuestion[]>(activeQuiz?.questions || []);
@@ -119,7 +119,7 @@ export const EditManagementView: React.FC = () => {
       id: `quiz-custom-${Date.now()}`,
       title: newQuizTitle.trim(),
       category: newQuizCategory,
-      weekLabel: '第5週 定期テスト（新規）',
+      weekLabel: '第5週 小テスト（新規）',
       description: '新しく追加されたクラス小テストです。',
       durationMinutes: 5,
       questions: [
@@ -429,7 +429,7 @@ export const EditManagementView: React.FC = () => {
             {/* Save Button */}
             <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
               <span className="text-xs text-slate-400">
-                保存すると「定期テスト」タブに即時反映されます
+                保存すると「小テスト」タブに即時反映されます
               </span>
 
               <button

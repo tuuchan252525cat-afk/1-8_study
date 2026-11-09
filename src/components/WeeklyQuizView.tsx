@@ -256,14 +256,14 @@ export const WeeklyQuizView: React.FC = () => {
               className="py-3 px-3 rounded-2xl bg-[#fdfbf7] hover:bg-stone-100 text-slate-800 text-xs font-black border border-stone-300 shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <Sparkles className="w-4 h-4 text-amber-500" />
-              <span>AI傾向分析へ</span>
+              <span>定期テスト予想問題一覧へ</span>
             </button>
 
             <button
               onClick={backToList}
               className="py-3 px-3 rounded-2xl bg-white hover:bg-stone-100 text-slate-800 text-xs font-black border border-stone-300 shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer"
             >
-              <span>テスト一覧へ戻る</span>
+              <span>小テスト一覧へ戻る</span>
             </button>
           </div>
 
@@ -464,7 +464,7 @@ export const WeeklyQuizView: React.FC = () => {
                     className="px-5 py-2.5 rounded-2xl bg-[#1c603a] text-white text-xs font-black shadow-xs hover:bg-[#154a2c] cursor-pointer inline-flex items-center gap-1.5"
                   >
                     <Sparkles className="w-4 h-4 text-amber-300" />
-                    <span>AI傾向分析で問題を作成する</span>
+                    <span>定期テスト予想問題一覧を見る</span>
                   </button>
                 )}
               </div>

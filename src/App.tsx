@@ -8,7 +8,7 @@ import { MaterialShareView } from './components/MaterialShareView';
 import { ForumView } from './components/ForumView';
 import { MyPageView } from './components/MyPageView';
 import { EditManagementView } from './components/EditManagementView';
-import { AiTestAnalyzerView } from './components/AiTestAnalyzerView';
+import { PeriodicPredictedQuestionsView } from './components/PeriodicPredictedQuestionsView';
 import { LoginView } from './components/LoginView';
 import { ReturnToHomeButton } from './components/SubViewHeader';
 
@@ -44,9 +44,9 @@ const AppContent: React.FC = () => {
               </>
             )}
 
-            {currentTab === 'ai_analyzer' && (
+            {(currentTab === 'ai_analyzer' || (currentTab as string) === 'periodic_predicted') && (
               <>
-                <AiTestAnalyzerView />
+                <PeriodicPredictedQuestionsView />
                 <ReturnToHomeButton />
               </>
             )}

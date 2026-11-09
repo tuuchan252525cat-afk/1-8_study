@@ -128,7 +128,7 @@ export const PortalHomeView: React.FC = () => {
             </p>
           </button>
 
-          {/* Card B: 定期テスト */}
+          {/* Card B: 小テスト */}
           <button
             onClick={() => setCurrentTab('quiz')}
             className="bg-white hover:bg-stone-50 p-6 rounded-3xl border border-stone-200/80 shadow-sm transition-all duration-200 text-center flex flex-col items-center justify-center group cursor-pointer hover:border-amber-500 hover:shadow-md"
@@ -137,7 +137,7 @@ export const PortalHomeView: React.FC = () => {
               <Grid className="w-7 h-7" />
             </div>
             <h2 className="text-xl font-black text-slate-900 group-hover:text-amber-700 transition-colors mb-1">
-              定期テスト
+              小テスト
             </h2>
             <p className="text-xs font-semibold text-slate-500">
               英単語＆ミゾブルー小テスト・AI予想問題を解く
@@ -145,7 +145,7 @@ export const PortalHomeView: React.FC = () => {
           </button>
         </div>
 
-        {/* Row 2: Full Width Wide Card with Dashed Border (AI傾向分析 ＆ 予想問題) */}
+        {/* Row 2: Full Width Wide Card with Dashed Border (定期テスト予想問題一覧) */}
         <button
           onClick={() => setCurrentTab('ai_analyzer')}
           className="w-full bg-white hover:bg-sky-50/50 p-6 sm:p-7 rounded-3xl border border-stone-200/80 shadow-sm transition-all duration-200 text-center flex flex-col items-center justify-center group cursor-pointer hover:border-sky-500 hover:shadow-md relative overflow-hidden"
@@ -158,14 +158,14 @@ export const PortalHomeView: React.FC = () => {
           </div>
 
           <h2 className="text-2xl font-black text-slate-900 group-hover:text-sky-700 transition-colors mb-1 flex items-center gap-2">
-            <span>AI傾向分析 ＆ 予想問題</span>
+            <span>定期テスト予想問題一覧</span>
             <span className="px-2 py-0.5 rounded-md bg-sky-100 text-sky-700 text-xs font-extrabold">
               NEW
             </span>
           </h2>
 
           <p className="text-xs sm:text-sm font-semibold text-slate-600 mb-4">
-            過去問ファイル（画像/PDF/テキスト）をAIで分析＆予想問題を自動作成する
+            各教科の出題傾向を分析した定期テスト予想問題の演習 ＆ 新規作成
           </p>
 
           <div className="w-full border-b-2 border-dashed border-sky-300" />

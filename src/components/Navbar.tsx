@@ -12,9 +12,9 @@ export const Navbar: React.FC = () => {
       case 'tests':
         return '成績・順位';
       case 'quiz':
-        return '定期テスト';
+        return '小テスト';
       case 'ai_analyzer':
-        return 'AI傾向分析';
+        return '定期テスト予想問題一覧';
       case 'materials':
         return '教材共有';
       case 'forum':
@@ -93,7 +93,7 @@ export const Navbar: React.FC = () => {
                     : 'hover:text-slate-900 hover:bg-slate-100'
                 }`}
               >
-                定期テスト
+                小テスト
               </button>
 
               <button
@@ -105,7 +105,7 @@ export const Navbar: React.FC = () => {
                 }`}
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                <span>AI傾向分析</span>
+                <span>定期テスト予想問題</span>
               </button>
 
               <button
@@ -226,7 +226,7 @@ export const Navbar: React.FC = () => {
               }`}
             >
               <BookOpen className="w-4 h-4 mb-0.5" />
-              <span className="text-[8px] font-bold">定期テスト</span>
+              <span className="text-[8px] font-bold">小テスト</span>
             </button>
 
             <button
@@ -236,7 +236,7 @@ export const Navbar: React.FC = () => {
               }`}
             >
               <Sparkles className="w-4 h-4 mb-0.5 text-amber-500" />
-              <span className="text-[8px] font-bold">AI分析</span>
+              <span className="text-[8px] font-bold">予想問題</span>
             </button>
 
             <button

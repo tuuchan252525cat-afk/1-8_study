@@ -31,7 +31,7 @@ import {
 import { getPersistentItem, setPersistentItem, compressImageBase64 } from '../utils/dbStorage';
 import { SubjectOption, DEFAULT_SUBJECTS, createSubjectOption } from '../constants/subjects';
 
-export type AppTab = 'portal' | 'home' | 'scores' | 'tests' | 'quiz' | 'ai_analyzer' | 'materials' | 'forum' | 'mypage' | 'edit';
+export type AppTab = 'portal' | 'home' | 'scores' | 'tests' | 'quiz' | 'ai_analyzer' | 'periodic_predicted' | 'materials' | 'forum' | 'mypage' | 'edit';
 
 interface AppContextType {
   // Auth & Student State

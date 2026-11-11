@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Shared study materials and test papers
+    match /materials/{materialId} {
+      allow read: if true;
+      allow create: if isValidId(materialId)
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 128
+        && request.resource.data.subject is string;
+      allow update: if isValidId(materialId)
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 128;
+      allow delete: if isValidId(materialId);
+    }
+
+    // Quizzes & predicted questions
+    match /quizzes/{quizId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(quizId);
+    }
+
+    // Test records
+    match /testRecords/{recordId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(recordId);
+    }
+
+    // Class forum posts
+    match /posts/{postId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(postId);
+    }
+
+    // Custom subjects
+    match /customSubjects/{subjectId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(subjectId);
+    }
+
+    // Quiz submissions
+    match /quizSubmissions/{subId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(subId);
+    }
+  }
+}

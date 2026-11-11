@@ -1,0 +1,89 @@
+{
+  "entities": {
+    "StudyMaterial": {
+      "title": "StudyMaterial",
+      "description": "Shared test papers and study materials for class 1-8",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string", "maxLength": 128 },
+        "subject": { "type": "string", "maxLength": 64 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "fileType": { "type": "string", "enum": ["pdf", "image", "summary"] },
+        "fileSize": { "type": "string", "maxLength": 32 },
+        "authorNickname": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "maxLength": 32 },
+        "downloadCount": { "type": "number" },
+        "contentPreview": { "type": "string", "maxLength": 2000 },
+        "imageUrl": { "type": "string", "maxLength": 2000000 },
+        "pdfUrl": { "type": "string", "maxLength": 2000000 },
+        "documentSections": { "type": "array" }
+      },
+      "required": ["id", "title", "subject", "fileType", "createdAt"]
+    },
+    "WeeklyQuiz": {
+      "title": "WeeklyQuiz",
+      "description": "Weekly mini quiz and periodic predicted questions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string", "maxLength": 128 },
+        "category": { "type": "string" },
+        "weekLabel": { "type": "string", "maxLength": 64 },
+        "description": { "type": "string", "maxLength": 500 },
+        "durationMinutes": { "type": "number" },
+        "questions": { "type": "array" }
+      },
+      "required": ["id", "title", "category", "questions"]
+    },
+    "TestRecord": {
+      "title": "TestRecord",
+      "description": "Anonymous score records for tests",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "testTitle": { "type": "string", "maxLength": 128 },
+        "testDate": { "type": "string", "maxLength": 32 },
+        "studentNumber": { "type": "number" },
+        "scores": { "type": "object" },
+        "totalScore": { "type": "number" }
+      },
+      "required": ["id", "testTitle", "studentNumber", "totalScore"]
+    },
+    "ForumPost": {
+      "title": "ForumPost",
+      "description": "Class 1-8 discussion and study Q&A posts",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentNumber": { "type": "number" },
+        "authorNickname": { "type": "string", "maxLength": 64 },
+        "subjectTag": { "type": "string", "maxLength": 64 },
+        "title": { "type": "string", "maxLength": 128 },
+        "content": { "type": "string", "maxLength": 4000 },
+        "createdAt": { "type": "string", "maxLength": 32 },
+        "reactions": { "type": "object" },
+        "comments": { "type": "array" }
+      },
+      "required": ["id", "authorNickname", "title", "content"]
+    }
+  },
+  "firestore": {
+    "/materials/{materialId}": {
+      "schema": "StudyMaterial",
+      "description": "Shared study materials and test papers across devices"
+    },
+    "/quizzes/{quizId}": {
+      "schema": "WeeklyQuiz",
+      "description": "Quizzes and predicted test questions"
+    },
+    "/testRecords/{recordId}": {
+      "schema": "TestRecord",
+      "description": "Test scores"
+    },
+    "/posts/{postId}": {
+      "schema": "ForumPost",
+      "description": "Class forum posts"
+    }
+  }
+}

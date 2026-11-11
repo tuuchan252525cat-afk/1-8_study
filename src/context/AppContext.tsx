@@ -37,6 +37,13 @@ import {
   VALID_TABS,
 } from '../utils/navigation';
 
+import {
+  saveMaterialToCloud,
+  deleteMaterialFromCloud,
+  fetchMaterialsFromCloud,
+  subscribeToMaterials,
+} from '../utils/firebase';
+
 import { AppTab } from '../types';
 export type { AppTab };
 
@@ -162,7 +169,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const localQuizzes = await getPersistentItem<WeeklyQuiz[]>(STORAGE_KEYS.QUIZZES, INITIAL_QUIZZES);
         const localCustomSubjects = await getPersistentItem<SubjectOption[]>(STORAGE_KEYS.CUSTOM_SUBJECTS, []);
 
-        // B. Fetch server persistent storage from /api/data
+        // B. Fetch server persistent storage from /api/data & Firebase Cloud
         let serverData: any = null;
         try {
           const res = await fetch('/api/data');
@@ -173,11 +180,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           console.warn('Server storage fetch notice:', e);
         }
 
+        let cloudMaterials: StudyMaterial[] = [];
+        try {
+          cloudMaterials = await fetchMaterialsFromCloud();
+        } catch (e) {
+          console.warn('Firebase cloud materials fetch notice:', e);
+        }
+
         // C. Safe Union Merge (Union by ID so no data is ever lost across device/browser updates)
         const materialsMap = new Map<string, StudyMaterial>();
+        INITIAL_MATERIALS.forEach((m) => { if (m?.id) materialsMap.set(m.id, m); });
         (serverData?.materials || []).forEach((m: StudyMaterial) => { if (m?.id) materialsMap.set(m.id, m); });
         (localMaterials || []).forEach((m) => { if (m?.id) materialsMap.set(m.id, m); });
+        (cloudMaterials || []).forEach((m) => { if (m?.id) materialsMap.set(m.id, m); });
         const mergedMaterials = Array.from(materialsMap.values());
+
+        // Seed initial materials to cloud if cloud was completely empty
+        if (cloudMaterials.length === 0 && mergedMaterials.length > 0) {
+          mergedMaterials.forEach((m) => saveMaterialToCloud(m).catch(() => {}));
+        }
 
         const quizzesMap = new Map<string, WeeklyQuiz>();
         (serverData?.quizzes || []).forEach((q: WeeklyQuiz) => { if (q?.id) quizzesMap.set(q.id, q); });
@@ -243,6 +264,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
     hydrateStorage();
     return () => { isMounted = false; };
+  }, []);
+
+  // Real-time Firestore subscription: when ANY PC uploads or deletes a material, all PCs update instantly
+  useEffect(() => {
+    const unsubscribe = subscribeToMaterials((cloudList) => {
+      if (cloudList && cloudList.length > 0) {
+        setMaterials((prev) => {
+          const map = new Map<string, StudyMaterial>();
+          prev.forEach((m) => { if (m?.id) map.set(m.id, m); });
+          cloudList.forEach((m) => { if (m?.id) map.set(m.id, m); });
+          const updated = Array.from(map.values());
+          if (isHydratedRef.current) {
+            setPersistentItem(STORAGE_KEYS.MATERIALS, updated);
+          }
+          return updated;
+        });
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
   // Persistent State Effects (GUARDED: never overwrite storage before hydration completes!)
@@ -664,7 +705,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return nextList;
     });
 
-    // 3. Immediately persist to server-side JSON storage
+    // 3. Persist to Firebase Cloud Firestore for instant real-time synchronization across all PCs
+    saveMaterialToCloud(newMat).catch((e) => console.warn('Cloud material save error:', e));
+
+    // 4. Immediately persist to server-side JSON storage
     try {
       await fetch('/api/data/materials', {
         method: 'POST',
@@ -704,6 +748,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setPersistentItem(STORAGE_KEYS.MATERIALS, filtered);
       return filtered;
     });
+    // Delete from Firebase Cloud Firestore
+    deleteMaterialFromCloud(materialId).catch((e) => console.warn('Cloud material delete error:', e));
+
     fetch(`/api/data/materials/${encodeURIComponent(materialId)}`, {
       method: 'DELETE',
     }).catch(() => {});

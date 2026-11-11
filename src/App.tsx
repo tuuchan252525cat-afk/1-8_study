@@ -21,7 +21,7 @@ const AppContent: React.FC = () => {
       <Navbar />
 
       {/* Main View Area (Protected by Login Gate) */}
-      <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-6 pb-24 md:pb-12">
+      <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-6 pb-28 sm:pb-32">
         {!isLoggedIn ? (
           <LoginView />
         ) : (
@@ -83,7 +83,7 @@ const AppContent: React.FC = () => {
       </main>
 
       {/* Clean festival-inspired quiet footer */}
-      <footer className="border-t border-slate-400/40 bg-[#c2c3c3]/70 text-slate-600 text-xs py-6 text-center">
+      <footer className="border-t border-slate-400/40 bg-[#c2c3c3]/70 text-slate-600 text-xs py-6 mb-20 text-center">
         <div className="max-w-5xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="font-extrabold text-slate-800">1-8 SITE</span>

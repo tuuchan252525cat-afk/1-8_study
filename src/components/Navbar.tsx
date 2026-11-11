@@ -11,7 +11,6 @@ import {
   ChevronLeft,
   Home,
   PlusCircle,
-  Sparkles,
 } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
@@ -41,7 +40,7 @@ export const Navbar: React.FC = () => {
     }
   };
 
-  // Sleek Bottom Menu Bar items (Structure modeled on reference layout with clean white/light styling)
+  // Unified Menu Bar Items (Identical on both PC and smartphone)
   const navItems = [
     {
       key: 'portal' as const,
@@ -72,6 +71,13 @@ export const Navbar: React.FC = () => {
       onClick: () => setCurrentTab('ai_analyzer'),
     },
     {
+      key: 'materials' as const,
+      label: '教材共有',
+      icon: FolderDown,
+      isActive: currentTab === 'materials',
+      onClick: () => setCurrentTab('materials'),
+    },
+    {
       key: 'forum' as const,
       label: '掲示板',
       icon: MessageSquare,
@@ -89,10 +95,10 @@ export const Navbar: React.FC = () => {
 
   return (
     <>
-      {/* Top Bar for Desktop & Tablet (White / Light theme matching portal) */}
+      {/* Top Header (Unified between PC & Smartphone) */}
       <header className="sticky top-0 z-30 bg-[#c2c3c3]/95 backdrop-blur-md border-b border-slate-400/50 shadow-2xs">
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 sm:gap-4 bg-[#c2c3c3]">
-          {/* Zone 1: Back Button & Page Title (Topmost Element) */}
+        <div className="max-w-5xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 sm:gap-4 bg-[#c2c3c3]">
+          {/* Zone 1: Back Button & Page Title */}
           <div className="flex items-center gap-2.5 shrink-0">
             {currentTab !== 'portal' ? (
               <div className="flex items-center gap-2 sm:gap-3">
@@ -119,109 +125,26 @@ export const Navbar: React.FC = () => {
             )}
           </div>
 
-          {/* Zone 2: Navigation Links for Desktop */}
-          {isLoggedIn && (
-            <nav className="hidden md:flex items-center gap-1.5 lg:gap-2 text-xs sm:text-sm font-semibold text-slate-700">
-              <button
-                onClick={() => setCurrentTab('portal')}
-                className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                  currentTab === 'portal'
-                    ? 'bg-slate-900 text-white font-bold shadow-2xs'
-                    : 'hover:text-slate-900 hover:bg-slate-100'
-                }`}
-              >
-                ポータル
-              </button>
-
-              <button
-                onClick={() => setCurrentTab('home')}
-                className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                  currentTab === 'home' || currentTab === 'tests' || currentTab === 'scores'
-                    ? 'bg-slate-900 text-white font-bold shadow-2xs'
-                    : 'hover:text-slate-900 hover:bg-slate-100'
-                }`}
-              >
-                成績・順位
-              </button>
-
-              <button
-                onClick={() => setCurrentTab('quiz')}
-                className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                  currentTab === 'quiz'
-                    ? 'bg-slate-900 text-white font-bold shadow-2xs'
-                    : 'hover:text-slate-900 hover:bg-slate-100'
-                }`}
-              >
-                小テスト
-              </button>
-
-              <button
-                onClick={() => setCurrentTab('ai_analyzer')}
-                className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1.5 ${
-                  currentTab === 'ai_analyzer' || (currentTab as string) === 'periodic_predicted'
-                    ? 'bg-slate-900 text-white font-bold shadow-2xs'
-                    : 'hover:text-slate-900 hover:bg-slate-100'
-                }`}
-              >
-                <PlusCircle className="w-3.5 h-3.5 text-emerald-600" />
-                <span>定期テスト予想問題</span>
-              </button>
-
-              <button
-                onClick={() => setCurrentTab('materials')}
-                className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                  currentTab === 'materials'
-                    ? 'bg-slate-900 text-white font-bold shadow-2xs'
-                    : 'hover:text-slate-900 hover:bg-slate-100'
-                }`}
-              >
-                教材共有
-              </button>
-
-              <button
-                onClick={() => setCurrentTab('forum')}
-                className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                  currentTab === 'forum'
-                    ? 'bg-slate-900 text-white font-bold shadow-2xs'
-                    : 'hover:text-slate-900 hover:bg-slate-100'
-                }`}
-              >
-                掲示板
-              </button>
-
-              <button
-                onClick={() => setCurrentTab('mypage')}
-                className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                  currentTab === 'mypage'
-                    ? 'bg-slate-900 text-white font-bold shadow-2xs'
-                    : 'hover:text-slate-900 hover:bg-slate-100'
-                }`}
-              >
-                マイページ
-              </button>
-
-              <button
-                onClick={() => setCurrentTab('edit')}
-                className={`px-3 py-1.5 rounded-xl transition-all whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1.5 border border-slate-300 ${
-                  currentTab === 'edit'
-                    ? 'bg-rose-600 text-white font-bold border-rose-600 shadow-2xs'
-                    : 'bg-white hover:bg-slate-100 text-slate-700'
-                }`}
-                title="問題・テストの編集 (/edit)"
-              >
-                <Edit3 className="w-3.5 h-3.5" />
-                <span>問題編集 (/edit)</span>
-              </button>
-            </nav>
-          )}
-
-          {/* Zone 3: User status / Action */}
+          {/* Zone 2: User Status & Problem Edit Action */}
           <div className="flex items-center gap-2 shrink-0">
             {isLoggedIn && currentStudent ? (
               <div className="flex items-center gap-1.5 sm:gap-2">
                 <button
+                  onClick={() => setCurrentTab('edit')}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer text-xs font-black border ${
+                    currentTab === 'edit'
+                      ? 'bg-rose-600 text-white border-rose-600 shadow-2xs'
+                      : 'bg-white hover:bg-stone-100 text-slate-700 border-stone-300 shadow-2xs'
+                  }`}
+                  title="問題・テストの編集 (/edit)"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">問題編集</span>
+                </button>
+
+                <button
                   onClick={() => setCurrentTab('mypage')}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white hover:bg-stone-100 border border-stone-300/80 text-xs text-slate-800 transition-colors cursor-pointer shadow-2xs"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white hover:bg-stone-100 border border-stone-300 text-xs text-slate-800 transition-colors cursor-pointer shadow-2xs"
                   title="マイページへ"
                 >
                   <span
@@ -249,14 +172,14 @@ export const Navbar: React.FC = () => {
         </div>
       </header>
 
-      {/* Sleek White-Based Menu Bar (< 768px Mobile & Floating Quick Navigation) */}
-      {/* Retains the clean, spacious, uncluttered squircle layout from the reference image in a white/light theme */}
+      {/* Unified Sleek Bottom Menu Bar (Both PC & Smartphone) */}
+      {/* Modeled on the clean smartphone menu bar: icon squircle container + label underneath */}
       {isLoggedIn && (
         <nav
           aria-label="メインメニューバー"
-          className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-stone-200/90 shadow-[0_-4px_20px_rgba(0,0,0,0.06)] md:hidden"
+          className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-stone-200/90 shadow-[0_-4px_25px_rgba(0,0,0,0.08)]"
         >
-          <div className="max-w-xl mx-auto flex items-center justify-around h-[70px] px-2 pb-safe">
+          <div className="max-w-2xl mx-auto flex items-center justify-around h-[70px] sm:h-[74px] px-1 sm:px-4 pb-safe">
             {navItems.map((item) => {
               const Icon = item.icon;
               return (
@@ -265,16 +188,16 @@ export const Navbar: React.FC = () => {
                   onClick={item.onClick}
                   className="flex-1 flex flex-col items-center justify-center h-full min-h-[48px] py-1 transition-all duration-200 cursor-pointer group"
                 >
-                  {/* Squircle container: active item has the clean soft-tinted rounded square container */}
+                  {/* Squircle container: active item has the clean deep green container */}
                   <div
-                    className={`w-11 h-10 sm:w-12 sm:h-10 rounded-2xl flex items-center justify-center transition-all duration-200 ${
+                    className={`w-10 h-8 sm:w-12 sm:h-9 rounded-2xl flex items-center justify-center transition-all duration-200 ${
                       item.isActive
                         ? 'bg-[#1c603a] text-white shadow-xs'
-                        : 'text-stone-400 group-hover:text-slate-800 group-hover:bg-stone-100/60'
+                        : 'text-stone-400 group-hover:text-slate-800 group-hover:bg-stone-100/70'
                     }`}
                   >
                     <Icon
-                      className={`w-5 h-5 sm:w-6 sm:h-6 transition-transform duration-200 ${
+                      className={`w-5 h-5 sm:w-5.5 sm:h-5.5 transition-transform duration-200 ${
                         item.isActive ? 'scale-105' : ''
                       }`}
                     />
@@ -282,7 +205,7 @@ export const Navbar: React.FC = () => {
 
                   {/* Clean text label below */}
                   <span
-                    className={`text-[10px] sm:text-[11px] mt-1 tracking-tight transition-colors duration-200 ${
+                    className={`text-[9.5px] sm:text-[11px] mt-1 tracking-tight transition-colors duration-200 ${
                       item.isActive
                         ? 'text-[#1c603a] font-black'
                         : 'text-stone-500 font-bold group-hover:text-slate-800'

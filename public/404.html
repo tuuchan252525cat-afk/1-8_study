@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <title>いちはちさいと (1-8 SITE)</title>
+    <script type="text/javascript">
+      // GitHub Pages Single Page Apps redirection
+      // If a route like /1-8_study/edit or /1-8_study/scores triggers a 404 on GitHub Pages,
+      // this script smoothly redirects to /1-8_study/#/<route> so the app can load and render it.
+      (function() {
+        var path = window.location.pathname;
+        var search = window.location.search || '';
+        var hash = window.location.hash || '';
+
+        var segments = path.split('/').filter(Boolean);
+
+        if (segments.length >= 2) {
+          // Format: /<repo>/<route...>
+          var repo = segments[0];
+          var route = segments.slice(1).join('/');
+          var redirectUrl = window.location.origin + '/' + repo + '/#/' + route + search + hash;
+          window.location.replace(redirectUrl);
+        } else if (segments.length === 1 && segments[0] === 'edit') {
+          // Format: /edit at domain root
+          var redirectUrl = window.location.origin + '/#/edit' + search + hash;
+          window.location.replace(redirectUrl);
+        } else {
+          // Fallback to repo root or domain root
+          var repo = segments[0] || '';
+          window.location.replace(window.location.origin + (repo ? '/' + repo + '/' : '/') + hash);
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <p style="font-family: sans-serif; font-size: 14px; color: #555; text-align: center; margin-top: 20%;">
+      ページを読み込んでいます...
+    </p>
+  </body>
+</html>

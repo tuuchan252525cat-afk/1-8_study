@@ -30,8 +30,15 @@ import {
 } from '../utils/privacyRankings';
 import { getPersistentItem, setPersistentItem, compressImageBase64 } from '../utils/dbStorage';
 import { SubjectOption, DEFAULT_SUBJECTS, createSubjectOption } from '../constants/subjects';
+import {
+  getAppBasePath,
+  getTabFromLocation,
+  getTabUrl,
+  VALID_TABS,
+} from '../utils/navigation';
 
-export type AppTab = 'portal' | 'home' | 'scores' | 'tests' | 'quiz' | 'ai_analyzer' | 'periodic_predicted' | 'materials' | 'forum' | 'mypage' | 'edit';
+import { AppTab } from '../types';
+export type { AppTab };
 
 interface AppContextType {
   // Auth & Student State
@@ -331,32 +338,48 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Navigation State
   const [currentTab, setCurrentTabState] = useState<AppTab>(() => {
-    if (typeof window !== 'undefined' && window.location.pathname === '/edit') {
-      return 'edit';
-    }
-    return 'portal';
+    return getTabFromLocation();
   });
 
   const setCurrentTab = (tab: AppTab) => {
     setCurrentTabState(tab);
     if (typeof window !== 'undefined') {
-      const targetPath = tab === 'edit' ? '/edit' : '/';
-      if (window.location.pathname !== targetPath) {
-        window.history.pushState(null, '', targetPath);
+      const targetUrl = getTabUrl(tab);
+      const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (currentUrl !== targetUrl) {
+        window.history.pushState({ tab }, '', targetUrl);
       }
     }
   };
 
   useEffect(() => {
-    const handlePopState = () => {
-      if (window.location.pathname === '/edit') {
-        setCurrentTabState('edit');
-      } else {
-        setCurrentTabState('home');
+    // 1. If page was opened directly at a path ending with /edit (e.g. /1-8_study/edit) without hash,
+    // normalize URL to /1-8_study/#/edit to ensure refreshes and subsequent subpage loads never 404
+    if (typeof window !== 'undefined') {
+      const cleanPath = window.location.pathname.replace(/\/+$/, '');
+      if (cleanPath.endsWith('/edit') && !window.location.hash) {
+        const base = getAppBasePath();
+        window.history.replaceState({ tab: 'edit' }, '', `${base}#/edit`);
       }
+    }
+
+    // 2. Popstate and hashchange listeners for browser back/forward buttons
+    const handleLocationChange = (e?: Event) => {
+      const popState = typeof PopStateEvent !== 'undefined' && e instanceof PopStateEvent ? e : undefined;
+      if (popState?.state?.tab && VALID_TABS.includes(popState.state.tab as AppTab)) {
+        setCurrentTabState(popState.state.tab as AppTab);
+        return;
+      }
+      const detectedTab = getTabFromLocation();
+      setCurrentTabState(detectedTab);
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+
+    window.addEventListener('popstate', handleLocationChange);
+    window.addEventListener('hashchange', handleLocationChange);
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+      window.removeEventListener('hashchange', handleLocationChange);
+    };
   }, []);
 
   const login = (attendanceNumber: number, password?: string) => {

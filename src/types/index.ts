@@ -125,6 +125,19 @@ export interface QuizResult {
   completedAt: string;
 }
 
+export type AppTab =
+  | 'portal'
+  | 'home'
+  | 'scores'
+  | 'tests'
+  | 'quiz'
+  | 'ai_analyzer'
+  | 'periodic_predicted'
+  | 'materials'
+  | 'forum'
+  | 'mypage'
+  | 'edit';
+
 export type MaterialSubject = 'all' | string;
 
 export interface MaterialDocumentSection {

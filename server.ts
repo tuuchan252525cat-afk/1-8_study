@@ -1,6 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
 
@@ -161,6 +162,203 @@ ${textPrompt ? `【問題文・テキスト入力】:\n${textPrompt}` : ''}
       error: 'AIによる傾向分析の処理中にエラーが発生しました。',
       message: err.message || String(err),
     });
+  }
+});
+
+// ==========================================
+// Persistent Server-Side Data Storage System
+// Prevents data/materials from being lost on app updates
+// ==========================================
+const DATA_DIR = path.join(__dirname, 'server_data');
+const DATA_FILE = path.join(DATA_DIR, 'app_storage.json');
+
+try {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+} catch (e) {
+  console.warn('Could not create server_data directory:', e);
+}
+
+interface ServerData {
+  materials: any[];
+  quizzes: any[];
+  testRecords: any[];
+  posts: any[];
+  customSubjects: any[];
+  quizSubmissions: any[];
+  lastUpdated: string;
+}
+
+function loadServerStorage(): ServerData {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const content = fs.readFileSync(DATA_FILE, 'utf-8');
+      const parsed = JSON.parse(content);
+      return {
+        materials: Array.isArray(parsed.materials) ? parsed.materials : [],
+        quizzes: Array.isArray(parsed.quizzes) ? parsed.quizzes : [],
+        testRecords: Array.isArray(parsed.testRecords) ? parsed.testRecords : [],
+        posts: Array.isArray(parsed.posts) ? parsed.posts : [],
+        customSubjects: Array.isArray(parsed.customSubjects) ? parsed.customSubjects : [],
+        quizSubmissions: Array.isArray(parsed.quizSubmissions) ? parsed.quizSubmissions : [],
+        lastUpdated: parsed.lastUpdated || new Date().toISOString(),
+      };
+    }
+  } catch (err) {
+    console.error('Error reading server storage:', err);
+  }
+  return {
+    materials: [],
+    quizzes: [],
+    testRecords: [],
+    posts: [],
+    customSubjects: [],
+    quizSubmissions: [],
+    lastUpdated: new Date().toISOString(),
+  };
+}
+
+function saveServerStorage(patch: Partial<ServerData>): ServerData {
+  const current = loadServerStorage();
+  const merged: ServerData = {
+    ...current,
+    ...patch,
+    lastUpdated: new Date().toISOString(),
+  };
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(merged, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error writing server storage:', err);
+  }
+  return merged;
+}
+
+// 1. Get full server-persisted data
+app.get('/api/data', (_req, res) => {
+  const data = loadServerStorage();
+  res.json(data);
+});
+
+// 2. Safe bidirectional sync: merges client and server items by unique ID (union, never drops items)
+app.post('/api/data/sync', (req, res) => {
+  try {
+    const clientData: Partial<ServerData> = req.body || {};
+    const serverData = loadServerStorage();
+
+    // Union merge materials
+    const materialsMap = new Map<string, any>();
+    (serverData.materials || []).forEach((m) => { if (m?.id) materialsMap.set(m.id, m); });
+    (clientData.materials || []).forEach((m) => { if (m?.id) materialsMap.set(m.id, m); });
+    const mergedMaterials = Array.from(materialsMap.values());
+
+    // Union merge quizzes
+    const quizzesMap = new Map<string, any>();
+    (serverData.quizzes || []).forEach((q) => { if (q?.id) quizzesMap.set(q.id, q); });
+    (clientData.quizzes || []).forEach((q) => { if (q?.id) quizzesMap.set(q.id, q); });
+    const mergedQuizzes = Array.from(quizzesMap.values());
+
+    // Union merge test records
+    const recordsMap = new Map<string, any>();
+    (serverData.testRecords || []).forEach((r) => { if (r?.id) recordsMap.set(r.id, r); });
+    (clientData.testRecords || []).forEach((r) => { if (r?.id) recordsMap.set(r.id, r); });
+    const mergedRecords = Array.from(recordsMap.values());
+
+    // Union merge posts
+    const postsMap = new Map<string, any>();
+    (serverData.posts || []).forEach((p) => { if (p?.id) postsMap.set(p.id, p); });
+    (clientData.posts || []).forEach((p) => { if (p?.id) postsMap.set(p.id, p); });
+    const mergedPosts = Array.from(postsMap.values());
+
+    // Union merge custom subjects
+    const subjectsMap = new Map<string, any>();
+    (serverData.customSubjects || []).forEach((s) => { if (s?.key) subjectsMap.set(s.key, s); });
+    (clientData.customSubjects || []).forEach((s) => { if (s?.key) subjectsMap.set(s.key, s); });
+    const mergedSubjects = Array.from(subjectsMap.values());
+
+    // Union merge quiz submissions
+    const subsMap = new Map<string, any>();
+    (serverData.quizSubmissions || []).forEach((s) => { if (s?.id) subsMap.set(s.id, s); });
+    (clientData.quizSubmissions || []).forEach((s) => { if (s?.id) subsMap.set(s.id, s); });
+    const mergedSubs = Array.from(subsMap.values());
+
+    const saved = saveServerStorage({
+      materials: mergedMaterials,
+      quizzes: mergedQuizzes,
+      testRecords: mergedRecords,
+      posts: mergedPosts,
+      customSubjects: mergedSubjects,
+      quizSubmissions: mergedSubs,
+    });
+
+    res.json({ success: true, data: saved });
+  } catch (err: any) {
+    console.error('Error during /api/data/sync:', err);
+    res.status(500).json({ error: 'Sync failed', message: err.message });
+  }
+});
+
+// 3. Add or update material directly
+app.post('/api/data/materials', (req, res) => {
+  try {
+    const material = req.body;
+    if (!material || !material.id) {
+      return res.status(400).json({ error: 'Invalid material data' });
+    }
+    const current = loadServerStorage();
+    const existingIdx = current.materials.findIndex((m) => m.id === material.id);
+    let nextMaterials: any[];
+    if (existingIdx >= 0) {
+      nextMaterials = [...current.materials];
+      nextMaterials[existingIdx] = material;
+    } else {
+      nextMaterials = [material, ...current.materials];
+    }
+    saveServerStorage({ materials: nextMaterials });
+    res.json({ success: true, material });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to save material', message: err.message });
+  }
+});
+
+// 4. Delete material directly
+app.delete('/api/data/materials/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const current = loadServerStorage();
+    const filtered = current.materials.filter((m) => m.id !== id);
+    saveServerStorage({ materials: filtered });
+    res.json({ success: true, deletedId: id });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to delete material', message: err.message });
+  }
+});
+
+// 5. One-click Full Backup Export & Restore
+app.get('/api/data/backup', (_req, res) => {
+  const data = loadServerStorage();
+  res.setHeader('Content-Disposition', `attachment; filename=class_portal_backup_${Date.now()}.json`);
+  res.setHeader('Content-Type', 'application/json');
+  res.send(JSON.stringify(data, null, 2));
+});
+
+app.post('/api/data/restore', (req, res) => {
+  try {
+    const incomingData = req.body;
+    if (!incomingData || typeof incomingData !== 'object') {
+      return res.status(400).json({ error: 'Invalid backup file content' });
+    }
+    const saved = saveServerStorage({
+      materials: Array.isArray(incomingData.materials) ? incomingData.materials : [],
+      quizzes: Array.isArray(incomingData.quizzes) ? incomingData.quizzes : [],
+      testRecords: Array.isArray(incomingData.testRecords) ? incomingData.testRecords : [],
+      posts: Array.isArray(incomingData.posts) ? incomingData.posts : [],
+      customSubjects: Array.isArray(incomingData.customSubjects) ? incomingData.customSubjects : [],
+      quizSubmissions: Array.isArray(incomingData.quizSubmissions) ? incomingData.quizSubmissions : [],
+    });
+    res.json({ success: true, data: saved });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Restore failed', message: err.message });
   }
 });
 

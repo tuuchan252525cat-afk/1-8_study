@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef, ReactNode } from 'react';
 import {
   Student,
   TestRecord,
@@ -93,6 +93,12 @@ interface AppContextType {
   // Navigation
   currentTab: AppTab;
   setCurrentTab: (tab: AppTab) => void;
+
+  // Anti-Data-Loss & Cloud Sync Tools
+  isStorageHydrated: boolean;
+  syncWithServer: () => Promise<void>;
+  exportBackupJson: () => void;
+  importBackupJson: (file: File) => Promise<{ success: boolean; count: number; error?: string }>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -110,15 +116,6 @@ const STORAGE_KEYS = {
   CUSTOM_SUBJECTS: 'classhub_custom_subjects',
 };
 
-// Helper to check and filter out old mock data
-function filterOutMockData<T extends { id?: string }>(items: T[], mockIdPrefixes: string[]): T[] {
-  if (!Array.isArray(items)) return [];
-  return items.filter((item) => {
-    if (!item || !item.id) return true;
-    return !mockIdPrefixes.some((prefix) => item.id?.startsWith(prefix));
-  });
-}
-
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // 1. Current Student State
   const [students, setStudents] = useState<Student[]>(INITIAL_STUDENTS);
@@ -126,7 +123,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [passwords, setPasswords] = useState<Record<number, string>>({});
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
 
-  // 2. Main Content States (Initialized cleanly, loaded async from IndexedDB)
+  // 2. Main Content States
   const [customSubjects, setCustomSubjects] = useState<SubjectOption[]>([]);
   const [testRecords, setTestRecords] = useState<TestRecord[]>([]);
   const [activeTestTitle, setActiveTestTitle] = useState<string>('第1回 定期考査');
@@ -135,7 +132,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [materials, setMaterials] = useState<StudyMaterial[]>([]);
   const [posts, setPosts] = useState<ForumPost[]>([]);
 
-  // Async Storage Hydration on Mount (IndexedDB + localStorage)
+  // Hydration status guard: prevents React initial empty state from wiping persisted data
+  const isHydratedRef = useRef<boolean>(false);
+  const [isStorageHydrated, setIsStorageHydrated] = useState<boolean>(false);
+
+  // Async Storage Hydration on Mount: Loads both from IndexedDB & Server Storage, merging safely
   useEffect(() => {
     let isMounted = true;
     const hydrateStorage = async () => {
@@ -145,87 +146,182 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const savedPasses = await getPersistentItem<Record<number, string>>(STORAGE_KEYS.PASSWORDS, {});
         const savedLoggedIn = await getPersistentItem<boolean>('classhub_is_logged_in', false);
 
-        // Filter out old mock sample records if they exist in storage
-        const rawRecords = await getPersistentItem<TestRecord[]>(STORAGE_KEYS.TEST_RECORDS, INITIAL_TEST_RECORDS);
-        const cleanRecords = filterOutMockData(rawRecords, ['test-2026-10-', 'test-2026-06-']);
+        // A. Load from client storage (IndexedDB / localStorage)
+        const localRecords = await getPersistentItem<TestRecord[]>(STORAGE_KEYS.TEST_RECORDS, INITIAL_TEST_RECORDS);
+        const localMaterials = await getPersistentItem<StudyMaterial[]>(STORAGE_KEYS.MATERIALS, INITIAL_MATERIALS);
+        const localPosts = await getPersistentItem<ForumPost[]>(STORAGE_KEYS.POSTS, INITIAL_POSTS);
+        const localSubs = await getPersistentItem<QuizResult[]>(STORAGE_KEYS.QUIZ_SUBMISSIONS, INITIAL_QUIZ_SUBMISSIONS);
+        const localActiveTest = await getPersistentItem<string>(STORAGE_KEYS.ACTIVE_TEST, '第1回 定期考査');
+        const localQuizzes = await getPersistentItem<WeeklyQuiz[]>(STORAGE_KEYS.QUIZZES, INITIAL_QUIZZES);
+        const localCustomSubjects = await getPersistentItem<SubjectOption[]>(STORAGE_KEYS.CUSTOM_SUBJECTS, []);
 
-        const rawMaterials = await getPersistentItem<StudyMaterial[]>(STORAGE_KEYS.MATERIALS, INITIAL_MATERIALS);
-        const cleanMaterials = filterOutMockData(rawMaterials, ['mat-1', 'mat-2', 'mat-3', 'mat-4', 'mat-5', 'mat-6']);
+        // B. Fetch server persistent storage from /api/data
+        let serverData: any = null;
+        try {
+          const res = await fetch('/api/data');
+          if (res.ok) {
+            serverData = await res.json();
+          }
+        } catch (e) {
+          console.warn('Server storage fetch notice:', e);
+        }
 
-        const rawPosts = await getPersistentItem<ForumPost[]>(STORAGE_KEYS.POSTS, INITIAL_POSTS);
-        const cleanPosts = filterOutMockData(rawPosts, ['post-1', 'post-2', 'post-3', 'post-4']);
+        // C. Safe Union Merge (Union by ID so no data is ever lost across device/browser updates)
+        const materialsMap = new Map<string, StudyMaterial>();
+        (serverData?.materials || []).forEach((m: StudyMaterial) => { if (m?.id) materialsMap.set(m.id, m); });
+        (localMaterials || []).forEach((m) => { if (m?.id) materialsMap.set(m.id, m); });
+        const mergedMaterials = Array.from(materialsMap.values());
 
-        const rawSubs = await getPersistentItem<QuizResult[]>(STORAGE_KEYS.QUIZ_SUBMISSIONS, INITIAL_QUIZ_SUBMISSIONS);
-        const cleanSubs = filterOutMockData(rawSubs, ['sub-eng-', 'sub-mizo-']);
+        const quizzesMap = new Map<string, WeeklyQuiz>();
+        (serverData?.quizzes || []).forEach((q: WeeklyQuiz) => { if (q?.id) quizzesMap.set(q.id, q); });
+        (localQuizzes || []).forEach((q) => { if (q?.id) quizzesMap.set(q.id, q); });
+        const mergedQuizzes = Array.from(quizzesMap.values());
 
-        const savedActiveTest = await getPersistentItem<string>(STORAGE_KEYS.ACTIVE_TEST, '第1回 定期考査');
-        const savedQuizzes = await getPersistentItem<WeeklyQuiz[]>(STORAGE_KEYS.QUIZZES, INITIAL_QUIZZES);
-        const savedCustomSubjects = await getPersistentItem<SubjectOption[]>(STORAGE_KEYS.CUSTOM_SUBJECTS, []);
+        const recordsMap = new Map<string, TestRecord>();
+        (serverData?.testRecords || []).forEach((r: TestRecord) => { if (r?.id) recordsMap.set(r.id, r); });
+        (localRecords || []).forEach((r) => { if (r?.id) recordsMap.set(r.id, r); });
+        const mergedRecords = Array.from(recordsMap.values());
+
+        const postsMap = new Map<string, ForumPost>();
+        (serverData?.posts || []).forEach((p: ForumPost) => { if (p?.id) postsMap.set(p.id, p); });
+        (localPosts || []).forEach((p) => { if (p?.id) postsMap.set(p.id, p); });
+        const mergedPosts = Array.from(postsMap.values());
+
+        const subsMap = new Map<string, QuizResult>();
+        (serverData?.quizSubmissions || []).forEach((s: QuizResult) => { if (s?.id) subsMap.set(s.id, s); });
+        (localSubs || []).forEach((s) => { if (s?.id) subsMap.set(s.id, s); });
+        const mergedSubs = Array.from(subsMap.values());
+
+        const subjectsMap = new Map<string, SubjectOption>();
+        (serverData?.customSubjects || []).forEach((s: SubjectOption) => { if (s?.key) subjectsMap.set(s.key, s); });
+        (localCustomSubjects || []).forEach((s) => { if (s?.key) subjectsMap.set(s.key, s); });
+        const mergedSubjects = Array.from(subjectsMap.values());
 
         if (isMounted) {
           setStudents(savedStudents);
           setCurrentStudentNum(savedNum);
           setPasswords(savedPasses);
           setIsLoggedIn(savedLoggedIn);
-          setTestRecords(cleanRecords);
-          setMaterials(cleanMaterials);
-          setPosts(cleanPosts);
-          setQuizSubmissions(cleanSubs);
-          setActiveTestTitle(savedActiveTest);
-          setQuizzes(savedQuizzes);
-          setCustomSubjects(savedCustomSubjects);
+          setTestRecords(mergedRecords);
+          setMaterials(mergedMaterials);
+          setPosts(mergedPosts);
+          setQuizSubmissions(mergedSubs);
+          setActiveTestTitle(localActiveTest);
+          setQuizzes(mergedQuizzes.length > 0 ? mergedQuizzes : INITIAL_QUIZZES);
+          setCustomSubjects(mergedSubjects);
+
+          // Mark hydration complete! Now effects can safely write updates
+          isHydratedRef.current = true;
+          setIsStorageHydrated(true);
+
+          // Sync any new client items to server
+          fetch('/api/data/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              materials: mergedMaterials,
+              quizzes: mergedQuizzes,
+              testRecords: mergedRecords,
+              posts: mergedPosts,
+              customSubjects: mergedSubjects,
+              quizSubmissions: mergedSubs,
+            }),
+          }).catch(() => {});
         }
       } catch (err) {
         console.error('Error hydrating storage:', err);
+        isHydratedRef.current = true;
+        setIsStorageHydrated(true);
       }
     };
     hydrateStorage();
     return () => { isMounted = false; };
   }, []);
 
-  // Persistent State Effects
+  // Persistent State Effects (GUARDED: never overwrite storage before hydration completes!)
   useEffect(() => {
+    if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.STUDENTS, students);
   }, [students]);
 
   useEffect(() => {
+    if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.CURRENT_STUDENT_NUM, currentStudentNum);
   }, [currentStudentNum]);
 
   useEffect(() => {
+    if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.PASSWORDS, passwords);
   }, [passwords]);
 
   useEffect(() => {
+    if (!isHydratedRef.current) return;
     setPersistentItem('classhub_is_logged_in', isLoggedIn);
   }, [isLoggedIn]);
 
   useEffect(() => {
+    if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.TEST_RECORDS, testRecords);
+    fetch('/api/data/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ testRecords }),
+    }).catch(() => {});
   }, [testRecords]);
 
   useEffect(() => {
+    if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.QUIZ_SUBMISSIONS, quizSubmissions);
+    fetch('/api/data/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quizSubmissions }),
+    }).catch(() => {});
   }, [quizSubmissions]);
 
   useEffect(() => {
+    if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.QUIZZES, quizzes);
+    fetch('/api/data/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quizzes }),
+    }).catch(() => {});
   }, [quizzes]);
 
   useEffect(() => {
+    if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.MATERIALS, materials);
+    fetch('/api/data/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ materials }),
+    }).catch(() => {});
   }, [materials]);
 
   useEffect(() => {
+    if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.POSTS, posts);
+    fetch('/api/data/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ posts }),
+    }).catch(() => {});
   }, [posts]);
 
   useEffect(() => {
+    if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.ACTIVE_TEST, activeTestTitle);
   }, [activeTestTitle]);
 
   useEffect(() => {
+    if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.CUSTOM_SUBJECTS, customSubjects);
+    fetch('/api/data/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customSubjects }),
+    }).catch(() => {});
   }, [customSubjects]);
 
   // Current logged in student object
@@ -513,7 +609,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   };
 
-  // Materials with image compression & persistent IndexedDB saving
+  // Materials with double-layer persistent IndexedDB & server-side JSON backup
   const addMaterial = async (
     material: Omit<StudyMaterial, 'id' | 'createdAt' | 'downloadCount' | 'authorNickname'>
   ) => {
@@ -531,17 +627,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const newMat: StudyMaterial = {
       ...material,
       imageUrl: processedImg,
-      id: `mat-user-${Date.now()}`,
+      id: `mat-user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       createdAt: new Date().toISOString().slice(0, 10),
       downloadCount: 0,
       authorNickname: author,
     };
 
+    // 1. Update React state immediately
     setMaterials((prev) => {
       const nextList = [newMat, ...prev];
+      // 2. Save directly to persistent IndexedDB
       setPersistentItem(STORAGE_KEYS.MATERIALS, nextList);
       return nextList;
     });
+
+    // 3. Immediately persist to server-side JSON storage
+    try {
+      await fetch('/api/data/materials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newMat),
+      });
+    } catch (err) {
+      console.warn('Server material persist notice:', err);
+    }
   };
 
   const incrementMaterialDownload = (materialId: string) => {
@@ -551,13 +660,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const updateMaterial = (materialId: string, updated: Partial<StudyMaterial>) => {
-    setMaterials((prev) =>
-      prev.map((m) => (m.id === materialId ? { ...m, ...updated } : m))
-    );
+    setMaterials((prev) => {
+      const next = prev.map((m) => (m.id === materialId ? { ...m, ...updated } : m));
+      setPersistentItem(STORAGE_KEYS.MATERIALS, next);
+      const target = next.find((m) => m.id === materialId);
+      if (target) {
+        fetch('/api/data/materials', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(target),
+        }).catch(() => {});
+      }
+      return next;
+    });
   };
 
   const deleteMaterial = (materialId: string) => {
-    setMaterials((prev) => prev.filter((m) => m.id !== materialId));
+    setMaterials((prev) => {
+      const filtered = prev.filter((m) => m.id !== materialId);
+      setPersistentItem(STORAGE_KEYS.MATERIALS, filtered);
+      return filtered;
+    });
+    fetch(`/api/data/materials/${encodeURIComponent(materialId)}`, {
+      method: 'DELETE',
+    }).catch(() => {});
   };
 
   // Forum
@@ -575,7 +701,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       reactions: { like: 0, heart: 0, lightbulb: 0 },
       comments: [],
     };
-    setPosts((prev) => [newPost, ...prev]);
+    setPosts((prev) => {
+      const next = [newPost, ...prev];
+      setPersistentItem(STORAGE_KEYS.POSTS, next);
+      return next;
+    });
   };
 
   const addComment = (postId: string, content: string) => {
@@ -620,11 +750,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const addQuiz = (newQuiz: WeeklyQuiz) => {
-    setQuizzes((prev) => [...prev, newQuiz]);
+    setQuizzes((prev) => {
+      const next = [...prev, newQuiz];
+      setPersistentItem(STORAGE_KEYS.QUIZZES, next);
+      return next;
+    });
   };
 
   const deleteQuiz = (quizId: string) => {
-    setQuizzes((prev) => prev.filter((q) => q.id !== quizId));
+    setQuizzes((prev) => {
+      const next = prev.filter((q) => q.id !== quizId);
+      setPersistentItem(STORAGE_KEYS.QUIZZES, next);
+      return next;
+    });
   };
 
   const updateQuizQuestion = (quizId: string, qIndex: number, question: QuizQuestion) => {
@@ -654,6 +792,95 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return { ...q, questions: q.questions.filter((item) => item.id !== questionId) };
       })
     );
+  };
+
+  // Sync With Server Manual Trigger
+  const syncWithServer = async () => {
+    try {
+      const res = await fetch('/api/data');
+      if (res.ok) {
+        const serverData = await res.json();
+        if (Array.isArray(serverData.materials)) {
+          setMaterials((prev) => {
+            const map = new Map<string, StudyMaterial>();
+            prev.forEach((m) => map.set(m.id, m));
+            serverData.materials.forEach((m: StudyMaterial) => map.set(m.id, m));
+            const merged = Array.from(map.values());
+            setPersistentItem(STORAGE_KEYS.MATERIALS, merged);
+            return merged;
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Manual sync error:', e);
+    }
+  };
+
+  // Export full JSON backup file (protects user data indefinitely)
+  const exportBackupJson = () => {
+    const backupData = {
+      version: '1-8-site-backup-v2',
+      exportedAt: new Date().toISOString(),
+      materials,
+      quizzes,
+      testRecords,
+      posts,
+      customSubjects,
+      quizSubmissions,
+    };
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ichihachi_materials_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Import and restore from backup JSON file
+  const importBackupJson = async (file: File): Promise<{ success: boolean; count: number; error?: string }> => {
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== 'object') {
+        return { success: false, count: 0, error: 'バックアップファイルの形式が無効です。' };
+      }
+
+      let count = 0;
+      if (Array.isArray(parsed.materials)) {
+        setMaterials((prev) => {
+          const map = new Map<string, StudyMaterial>();
+          prev.forEach((m) => map.set(m.id, m));
+          parsed.materials.forEach((m: StudyMaterial) => {
+            if (m && m.id) {
+              map.set(m.id, m);
+              count += 1;
+            }
+          });
+          const merged = Array.from(map.values());
+          setPersistentItem(STORAGE_KEYS.MATERIALS, merged);
+          return merged;
+        });
+      }
+
+      if (Array.isArray(parsed.quizzes) && parsed.quizzes.length > 0) {
+        setQuizzes(parsed.quizzes);
+        setPersistentItem(STORAGE_KEYS.QUIZZES, parsed.quizzes);
+      }
+
+      // Sync to server storage
+      await fetch('/api/data/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed),
+      });
+
+      return { success: true, count };
+    } catch (err: any) {
+      return { success: false, count: 0, error: err.message || '復元処理に失敗しました。' };
+    }
   };
 
   return (
@@ -703,6 +930,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         toggleReaction,
         currentTab,
         setCurrentTab,
+        isStorageHydrated,
+        syncWithServer,
+        exportBackupJson,
+        importBackupJson,
       }}
     >
       {children}

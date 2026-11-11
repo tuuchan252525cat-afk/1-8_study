@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { MaterialSubject } from '../types';
 import {
@@ -166,6 +166,7 @@ export const MaterialShareView: React.FC = () => {
             ))}
           </div>
         </div>
+
       </div>
 
       {/* 2. Main Area: Empty State vs 2-Column Split */}

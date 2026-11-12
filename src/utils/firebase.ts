@@ -10,7 +10,7 @@ import {
   getDocs,
   Firestore,
 } from 'firebase/firestore';
-import { Student, StudyMaterial, WeeklyQuiz, TestRecord, ForumPost, QuizResult } from '../types';
+import { Student, StudyMaterial, StudentPrediction, WeeklyQuiz, TestRecord, ForumPost, QuizResult } from '../types';
 
 /**
  * Direct hardcoded Firebase configuration for 1-8 SITE.
@@ -45,6 +45,7 @@ export const COLLECTIONS = {
   CUSTOM_SUBJECTS: 'customSubjects',
   QUIZ_SUBMISSIONS: 'quizSubmissions',
   STUDENTS: 'students',
+  STUDENT_PREDICTIONS: 'student_predictions',
 } as const;
 
 /**
@@ -263,4 +264,94 @@ export function subscribeToStudents(
     return () => {};
   }
 }
+
+/**
+ * Saves a student-created test prediction to Firebase Firestore (student_predictions collection).
+ */
+export async function saveStudentPredictionToCloud(prediction: StudentPrediction): Promise<void> {
+  try {
+    const payload = sanitizeForFirestore(prediction);
+    const docRef = doc(db, COLLECTIONS.STUDENT_PREDICTIONS, prediction.id);
+    await setDoc(docRef, payload, { merge: true });
+    console.info(`[Firebase] Saved student prediction to Firestore: ${prediction.id} (${prediction.title})`);
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error('[Firebase] Failed to save student prediction to Firestore:', errorMsg);
+    throw new Error(`予想問題のクラウド保存エラー: ${errorMsg}`);
+  }
+}
+
+/**
+ * Deletes a student prediction from Firebase Firestore.
+ */
+export async function deleteStudentPredictionFromCloud(predictionId: string): Promise<void> {
+  try {
+    const docRef = doc(db, COLLECTIONS.STUDENT_PREDICTIONS, predictionId);
+    await deleteDoc(docRef);
+    console.info(`[Firebase] Deleted student prediction from Firestore: ${predictionId}`);
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error('[Firebase] Failed to delete student prediction from Firestore:', errorMsg);
+    throw new Error(`予想問題の削除エラー: ${errorMsg}`);
+  }
+}
+
+/**
+ * Fetches all student predictions from Firebase Firestore.
+ */
+export async function fetchStudentPredictionsFromCloud(): Promise<StudentPrediction[]> {
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.STUDENT_PREDICTIONS));
+    const list: StudentPrediction[] = [];
+    snap.forEach((d) => {
+      const item = d.data() as StudentPrediction;
+      if (item && item.id) {
+        list.push(item);
+      }
+    });
+    list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    return list;
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error('[Firebase] Error fetching student predictions from cloud:', errorMsg);
+    return [];
+  }
+}
+
+/**
+ * Subscribes to real-time updates for student predictions across all devices.
+ */
+export function subscribeToStudentPredictions(
+  onUpdate: (predictions: StudentPrediction[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  try {
+    const colRef = collection(db, COLLECTIONS.STUDENT_PREDICTIONS);
+    const unsubscribe = onSnapshot(
+      colRef,
+      (snapshot) => {
+        const list: StudentPrediction[] = [];
+        snapshot.forEach((d) => {
+          const item = d.data() as StudentPrediction;
+          if (item && item.id) {
+            list.push(item);
+          }
+        });
+        list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        onUpdate(list);
+      },
+      (error) => {
+        console.error('Firestore student predictions real-time subscription error:', error);
+        if (onError) {
+          onError(new Error(`予想問題リアルタイム同期エラー: ${error.message}`));
+        }
+      }
+    );
+    return unsubscribe;
+  } catch (e: any) {
+    console.error('Failed to attach student predictions Firestore listener:', e);
+    return () => {};
+  }
+}
+
 

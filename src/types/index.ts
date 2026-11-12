@@ -165,6 +165,8 @@ export interface StudyMaterial {
   documentSections?: MaterialDocumentSection[];
 }
 
+export type StudentPrediction = StudyMaterial;
+
 export interface ForumComment {
   id: string;
   authorNickname: string;

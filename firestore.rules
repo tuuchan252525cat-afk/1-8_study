@@ -51,5 +51,11 @@ service cloud.firestore {
       allow read: if true;
       allow create, update, delete: if isValidId(studentId);
     }
+
+    // Student created test predictions
+    match /student_predictions/{predictionId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(predictionId);
+    }
   }
 }

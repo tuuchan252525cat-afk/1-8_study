@@ -6,6 +6,7 @@ import {
   QuizQuestion,
   QuizResult,
   StudyMaterial,
+  StudentPrediction,
   ForumPost,
   AnonymousRankItem,
   AnonymousGrowthItem,
@@ -46,6 +47,10 @@ import {
   saveStudentToCloud,
   fetchStudentsFromCloud,
   subscribeToStudents,
+  saveStudentPredictionToCloud,
+  deleteStudentPredictionFromCloud,
+  fetchStudentPredictionsFromCloud,
+  subscribeToStudentPredictions,
 } from '../utils/firebase';
 
 import { AppTab } from '../types';
@@ -55,6 +60,7 @@ interface AppContextType {
   // Auth & Student State
   students: Student[];
   currentStudent: Student | null;
+  currentStudentNum: number;
   isLoggedIn: boolean;
   login: (attendanceNumber: number, password?: string) => { success: boolean; error?: string };
   logout: () => void;
@@ -101,6 +107,11 @@ interface AppContextType {
   incrementMaterialDownload: (materialId: string) => void;
   updateMaterial: (materialId: string, updated: Partial<StudyMaterial>) => void;
   deleteMaterial: (materialId: string) => void;
+
+  // Student Test Predictions
+  studentPredictions: StudentPrediction[];
+  addStudentPrediction: (prediction: Omit<StudentPrediction, 'id' | 'createdAt' | 'downloadCount' | 'authorNickname' | 'authorStudentNumber'>) => Promise<void>;
+  deleteStudentPrediction: (predictionId: string) => Promise<void>;
 
   // Forum (Board)
   posts: ForumPost[];
@@ -153,6 +164,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [quizzes, setQuizzes] = useState<WeeklyQuiz[]>(INITIAL_QUIZZES);
   const [quizSubmissions, setQuizSubmissions] = useState<QuizResult[]>([]);
   const [materials, setMaterials] = useState<StudyMaterial[]>([]);
+  const [studentPredictions, setStudentPredictions] = useState<StudentPrediction[]>([]);
   const [posts, setPosts] = useState<ForumPost[]>([]);
 
   // Cloud Sync & Reliability State (surfaces Firestore connection & save issues directly on UI)
@@ -243,6 +255,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setCloudSyncError(e?.message || 'Firestore接続エラー');
         }
 
+        let cloudPredictions: StudentPrediction[] = [];
+        try {
+          cloudPredictions = await fetchStudentPredictionsFromCloud();
+        } catch (e) {
+          console.warn('Firebase cloud predictions fetch notice:', e);
+        }
+
+        const localPredictions = await getPersistentItem<StudentPrediction[]>('classhub_student_predictions', []);
+        const predictionsMap = new Map<string, StudentPrediction>();
+        (localPredictions || []).forEach((p) => { if (p?.id) predictionsMap.set(p.id, p); });
+        (cloudPredictions || []).forEach((p) => { if (p?.id) predictionsMap.set(p.id, p); });
+        const mergedPredictions = Array.from(predictionsMap.values());
+        mergedPredictions.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
         // C. Safe Union Merge (Union by ID, filtering out legacy sample items)
         const isLegacySample = (id?: string) =>
           !id || id === 'mat-math-1' || id === 'mat-eng-1' || id === 'mat-chem-1' || id === 'test-doc';
@@ -300,6 +326,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setIsLoggedIn(savedLoggedIn);
           setTestRecords(mergedRecords);
           setMaterials(mergedMaterials);
+          setStudentPredictions(mergedPredictions);
           setPosts(mergedPosts);
           setQuizSubmissions(mergedSubs);
           setActiveTestTitle(localActiveTest);
@@ -387,6 +414,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       (err) => {
         setCloudSyncStatus('error');
         setCloudSyncError(err.message || 'Firestoreリアルタイム購読エラー');
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  // Real-time Firestore subscription for student test predictions
+  useEffect(() => {
+    const unsubscribe = subscribeToStudentPredictions(
+      (cloudList) => {
+        setStudentPredictions(cloudList || []);
+        if (isHydratedRef.current) {
+          setPersistentItem('classhub_student_predictions', cloudList || []);
+        }
+      },
+      (err) => {
+        console.warn('Student predictions subscription error:', err);
       }
     );
 
@@ -973,6 +1017,70 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  // Student Test Predictions Management
+  const addStudentPrediction = async (
+    prediction: Omit<StudentPrediction, 'id' | 'createdAt' | 'downloadCount' | 'authorNickname' | 'authorStudentNumber'>
+  ) => {
+    const author = currentStudent?.nickname || `出席番号${currentStudentNum}番`;
+
+    let processedImg = prediction.imageUrl;
+    if (processedImg && processedImg.startsWith('data:image/')) {
+      try {
+        processedImg = await compressImageBase64(processedImg, 1100, 1500, 0.7);
+      } catch (e) {
+        console.warn('Image compression notice:', e);
+      }
+    }
+
+    const newPred: StudentPrediction = {
+      ...prediction,
+      imageUrl: processedImg,
+      id: `pred-user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      createdAt: new Date().toISOString().slice(0, 10),
+      downloadCount: 0,
+      authorNickname: author,
+      authorStudentNumber: currentStudentNum,
+    };
+
+    setCloudSyncStatus('syncing');
+    try {
+      await saveStudentPredictionToCloud(newPred);
+      setCloudSyncStatus('connected');
+      setCloudSyncError(null);
+
+      setStudentPredictions((prev) => {
+        const nextList = [newPred, ...prev.filter((p) => p.id !== newPred.id)];
+        setPersistentItem('classhub_student_predictions', nextList);
+        return nextList;
+      });
+    } catch (e: any) {
+      const msg = e?.message || '予想問題のクラウド保存に失敗しました';
+      setCloudSyncStatus('error');
+      setCloudSyncError(msg);
+      throw new Error(msg);
+    }
+  };
+
+  const deleteStudentPrediction = async (predictionId: string) => {
+    setCloudSyncStatus('syncing');
+    try {
+      await deleteStudentPredictionFromCloud(predictionId);
+      setCloudSyncStatus('connected');
+      setCloudSyncError(null);
+
+      setStudentPredictions((prev) => {
+        const nextList = prev.filter((p) => p.id !== predictionId);
+        setPersistentItem('classhub_student_predictions', nextList);
+        return nextList;
+      });
+    } catch (e: any) {
+      const msg = e?.message || '予想問題の削除に失敗しました';
+      setCloudSyncStatus('error');
+      setCloudSyncError(msg);
+      throw new Error(msg);
+    }
+  };
+
   // Re-fetch all shared materials from Firestore manually (for recovery if network drops)
   const retryCloudSync = async () => {
     setCloudSyncStatus('syncing');
@@ -1199,6 +1307,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       value={{
         students,
         currentStudent,
+        currentStudentNum,
         isLoggedIn,
         login,
         logout,
@@ -1235,6 +1344,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         incrementMaterialDownload,
         updateMaterial,
         deleteMaterial,
+        studentPredictions,
+        addStudentPrediction,
+        deleteStudentPrediction,
         posts,
         addPost,
         addComment,

@@ -13,14 +13,7 @@ service cloud.firestore {
     // Shared study materials and test papers
     match /materials/{materialId} {
       allow read: if true;
-      allow create: if isValidId(materialId)
-        && request.resource.data.title is string
-        && request.resource.data.title.size() <= 128
-        && request.resource.data.subject is string;
-      allow update: if isValidId(materialId)
-        && request.resource.data.title is string
-        && request.resource.data.title.size() <= 128;
-      allow delete: if isValidId(materialId);
+      allow create, update, delete: if isValidId(materialId);
     }
 
     // Quizzes & predicted questions

@@ -17,16 +17,31 @@ import {
   Trash2,
   ExternalLink,
   AlertTriangle,
+  RefreshCw,
+  AlertCircle,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 
 export const MaterialShareView: React.FC = () => {
-  const { materials, addMaterial, deleteMaterial, setCurrentTab, allSubjects } = useApp();
+  const {
+    materials,
+    addMaterial,
+    deleteMaterial,
+    setCurrentTab,
+    allSubjects,
+    cloudSyncStatus,
+    cloudSyncError,
+    retryCloudSync,
+  } = useApp();
 
   const [activeSubject, setActiveSubject] = useState<MaterialSubject>('all');
   const [activeMaterialId, setActiveMaterialId] = useState<string>('');
   const [isUploadOpen, setIsUploadOpen] = useState<boolean>(false);
   const [isFullscreenPreview, setIsFullscreenPreview] = useState<boolean>(false);
   const [imgError, setImgError] = useState<boolean>(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isRetryingSync, setIsRetryingSync] = useState<boolean>(false);
 
   // View mode: 'image' (JPG/PDF image sheet) vs 'text' (digital sections)
   const [viewMode, setViewMode] = useState<'image' | 'text'>('image');
@@ -69,13 +84,20 @@ export const MaterialShareView: React.FC = () => {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setUploadError(null);
       const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
       const detectedType = isPdf ? 'pdf' : 'image';
       setNewType(detectedType);
       setUploadedFileName(file.name);
 
-      const sizeInMb = (file.size / (1024 * 1024)).toFixed(1);
+      const sizeInMb = (file.size / (1024 * 1024)).toFixed(2);
       setUploadedFileSize(`${sizeInMb} MB`);
+
+      if (isPdf && file.size > 800 * 1024) {
+        setUploadError(
+          `PDFサイズが大きすぎます (${sizeInMb} MB)。Firestore同期の制限(1MB)を超える可能性があるため、800KB以下のファイルを選択するか画像としてアップロードしてください。`
+        );
+      }
 
       const reader = new FileReader();
       reader.onload = (event) => {
@@ -91,12 +113,22 @@ export const MaterialShareView: React.FC = () => {
     e.preventDefault();
     if (!newTitle.trim() || isSaving) return;
 
+    setUploadError(null);
     setIsSaving(true);
     try {
       const isPdf =
         newType === 'pdf' ||
         uploadedFileName.toLowerCase().endsWith('.pdf') ||
         uploadedFilePreview.startsWith('data:application/pdf');
+
+      if (isPdf && uploadedFilePreview.length > 900 * 1024) {
+        throw new Error(
+          'PDFファイルの容量が大きすぎます（約' +
+            uploadedFileSize +
+            '）。Firestoreの上限（1MB）に収めるため、800KB以下のPDFを選択してください。'
+        );
+      }
+
       const finalType: 'pdf' | 'image' | 'summary' = isPdf ? 'pdf' : newType;
       const finalSize =
         uploadedFileSize ||
@@ -137,25 +169,42 @@ export const MaterialShareView: React.FC = () => {
         setUploadedFilePreview('');
         setUploadedFileName('');
         setUploadedFileSize('');
+        setUploadError(null);
         setIsSaving(false);
       }, 800);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Upload failed:', err);
+      setUploadError(err?.message || 'アップロードとクラウド同期に失敗しました');
       setIsSaving(false);
     }
   };
 
-  const handleDeleteMaterial = (id: string) => {
-    if (window.confirm('この教材を削除してもよろしいですか？')) {
-      deleteMaterial(id);
-      if (activeMaterialId === id) {
-        const remaining = materials.filter((m) => m.id !== id);
-        if (remaining.length > 0) {
-          setActiveMaterialId(remaining[0].id);
-        } else {
-          setActiveMaterialId('');
+  const handleDeleteMaterial = async (id: string) => {
+    if (window.confirm('この教材を削除してもよろしいですか？（クラウドからも削除されます）')) {
+      try {
+        await deleteMaterial(id);
+        if (activeMaterialId === id) {
+          const remaining = materials.filter((m) => m.id !== id);
+          if (remaining.length > 0) {
+            setActiveMaterialId(remaining[0].id);
+          } else {
+            setActiveMaterialId('');
+          }
         }
+      } catch (err: any) {
+        alert('削除エラー: ' + (err?.message || '削除に失敗しました'));
       }
+    }
+  };
+
+  const handleManualSync = async () => {
+    setIsRetryingSync(true);
+    try {
+      await retryCloudSync();
+    } catch (e: any) {
+      console.error('Manual sync failed:', e);
+    } finally {
+      setIsRetryingSync(false);
     }
   };
 
@@ -177,18 +226,79 @@ export const MaterialShareView: React.FC = () => {
     <div className="space-y-6">
       {/* 1. Header & Subject Filter */}
       <div className="bg-white rounded-3xl p-5 sm:p-7 border border-stone-200/90 shadow-xs space-y-4">
+        {/* Cloud Sync Error Alert Banner */}
+        {cloudSyncError && (
+          <div className="p-3.5 sm:p-4 bg-rose-50 border-2 border-rose-300 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-rose-900 animate-fadeIn">
+            <div className="flex items-start sm:items-center gap-2.5 font-bold">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5 sm:mt-0" />
+              <div>
+                <span className="font-black text-rose-900">【Firestore同期エラー】</span>
+                <span className="text-rose-800 ml-1 font-medium">{cloudSyncError}</span>
+              </div>
+            </div>
+            <button
+              onClick={handleManualSync}
+              disabled={isRetryingSync}
+              className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold flex items-center gap-1.5 shrink-0 cursor-pointer shadow-xs disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRetryingSync ? 'animate-spin' : ''}`} />
+              <span>データを再同期</span>
+            </button>
+          </div>
+        )}
+
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-stone-100">
           <div>
-            <div className="text-[10px] font-black text-[#1c603a] uppercase tracking-wider mb-0.5">
-              ◎ 1-8 SITE ARCHIVE
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="text-[10px] font-black text-[#1c603a] uppercase tracking-wider">
+                ◎ 1-8 SITE ARCHIVE
+              </span>
+              {/* Cloud Sync Indicator Pill */}
+              <div
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                  cloudSyncStatus === 'connected'
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : cloudSyncStatus === 'syncing'
+                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                    : 'bg-rose-50 text-rose-700 border-rose-200'
+                }`}
+                title="Firebase Firestoreリアルタイム同期状態"
+              >
+                {cloudSyncStatus === 'connected' ? (
+                  <>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>全端末同期中 (Firestore)</span>
+                  </>
+                ) : cloudSyncStatus === 'syncing' ? (
+                  <>
+                    <RefreshCw className="w-2.5 h-2.5 animate-spin text-amber-600" />
+                    <span>同期中...</span>
+                  </>
+                ) : (
+                  <>
+                    <WifiOff className="w-2.5 h-2.5 text-rose-600" />
+                    <span>同期未接続</span>
+                  </>
+                )}
+              </div>
             </div>
             <h2 className="text-lg font-black text-slate-900">定期テスト問題用紙 ＆ 教材ビューア</h2>
             <p className="text-xs text-stone-500 mt-0.5 font-medium">
-              定期テストの実物用紙や対策プリントを閲覧・共有できます。
+              どの端末から投稿しても全校生徒・全端末で共有されます（Firebase Firestoreリアルタイム連携）。
             </p>
           </div>
 
-          <div className="flex items-center gap-2.5 self-start sm:self-auto">
+          <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+            <button
+              onClick={handleManualSync}
+              disabled={isRetryingSync}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-stone-100 hover:bg-stone-200 text-slate-700 text-xs font-black transition-all cursor-pointer border border-stone-200"
+              title="クラウドから最新データを取得"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRetryingSync ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">再同期</span>
+            </button>
+
             <button
               onClick={() => setCurrentTab('edit')}
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-stone-100 hover:bg-stone-200 text-slate-700 text-xs font-black transition-all cursor-pointer border border-stone-200"
@@ -198,7 +308,10 @@ export const MaterialShareView: React.FC = () => {
             </button>
 
             <button
-              onClick={() => setIsUploadOpen(true)}
+              onClick={() => {
+                setUploadError(null);
+                setIsUploadOpen(true);
+              }}
               className="flex items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black shadow-xs transition-all cursor-pointer"
             >
               <Plus className="w-4 h-4" />
@@ -568,6 +681,15 @@ export const MaterialShareView: React.FC = () => {
               </div>
             ) : (
               <form onSubmit={handleUploadSubmit} className="space-y-4">
+                {uploadError && (
+                  <div className="p-3.5 bg-rose-50 border border-rose-300 rounded-2xl flex items-start gap-2.5 text-xs text-rose-800 animate-fadeIn">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5">
+                      <div className="font-black text-rose-900">教材の保存・共有に失敗しました</div>
+                      <div className="font-medium text-rose-700 break-words">{uploadError}</div>
+                    </div>
+                  </div>
+                )}
                 <div>
                   <label className="block text-xs font-black text-slate-700 mb-1.5">タイトル</label>
                   <input

@@ -10,15 +10,31 @@ import {
   getDocs,
   Firestore,
 } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
 import { StudyMaterial, WeeklyQuiz, TestRecord, ForumPost, QuizResult } from '../types';
-import { SubjectOption } from '../constants/subjects';
+
+/**
+ * Direct hardcoded Firebase configuration for 1-8 SITE.
+ * Explicitly provided so GitHub Pages (static site builds) and external clients
+ * never encounter missing .env variables or unresolved JSON import paths.
+ */
+export const FIREBASE_CONFIG = {
+  projectId: 'gen-lang-client-0105505780',
+  appId: '1:195274843550:web:b9df896894df45d039e28f',
+  apiKey: 'AIzaSyB25JN_ZaselKMXEPbTyOPyxXsweA2bOwo',
+  authDomain: 'gen-lang-client-0105505780.firebaseapp.com',
+  firestoreDatabaseId: 'ai-studio-classhub-ebff2094-49ab-4aac-b936-61880ba4d9ce',
+  storageBucket: 'gen-lang-client-0105505780.firebasestorage.app',
+  messagingSenderId: '195274843550',
+  measurementId: '',
+  oAuthClientId: '195274843550-fl72dc41t7o1f66egrsqlje4q20bqdpt.apps.googleusercontent.com',
+  recaptchaSiteKey: '',
+};
 
 // 1. Initialize Firebase App (Singleton)
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+const app = !getApps().length ? initializeApp(FIREBASE_CONFIG) : getApp();
 
-// CRITICAL: Must pass firebaseConfig.firestoreDatabaseId as required by AI Studio Firestore Enterprise setup
-export const db: Firestore = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
+// CRITICAL: Must pass firestoreDatabaseId as required by AI Studio Firestore Enterprise setup
+export const db: Firestore = getFirestore(app, FIREBASE_CONFIG.firestoreDatabaseId);
 export const auth = getAuth(app);
 
 export const COLLECTIONS = {
@@ -31,16 +47,48 @@ export const COLLECTIONS = {
 } as const;
 
 /**
+ * Recursively strips `undefined` values from an object.
+ * CRITICAL: Firestore `setDoc()` immediately throws `Unsupported field value: undefined`
+ * if any property in the document is `undefined` (e.g. imageUrl on a PDF, or optional formulas).
+ */
+export function sanitizeForFirestore(obj: any): any {
+  if (obj === null || obj === undefined) return null;
+  if (Array.isArray(obj)) {
+    return obj.map(sanitizeForFirestore).filter((item) => item !== undefined);
+  }
+  if (typeof obj === 'object') {
+    const clean: Record<string, any> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (v !== undefined) {
+        clean[k] = sanitizeForFirestore(v);
+      }
+    }
+    return clean;
+  }
+  return obj;
+}
+
+const isLegacyMockId = (id?: string) =>
+  !id ||
+  id === 'mat-math-1' ||
+  id === 'mat-eng-1' ||
+  id === 'mat-chem-1' ||
+  id === 'test-doc';
+
+/**
  * Saves a study material directly to Firebase Firestore, ensuring it is visible on all PCs & smartphones in real time.
+ * Sanitizes all payload fields to prevent `undefined` field crashes.
  */
 export async function saveMaterialToCloud(material: StudyMaterial): Promise<void> {
   try {
+    const payload = sanitizeForFirestore(material);
     const docRef = doc(db, COLLECTIONS.MATERIALS, material.id);
-    await setDoc(docRef, material, { merge: true });
-    console.info(`[Firebase] Saved material to Firestore: ${material.id} (${material.title})`);
-  } catch (err) {
-    console.error('[Firebase] Failed to save material to Firestore:', err);
-    throw err;
+    await setDoc(docRef, payload, { merge: true });
+    console.info(`[Firebase] Successfully saved material to Firestore: ${material.id} (${material.title})`);
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error('[Firebase] Failed to save material to Firestore:', errorMsg, material);
+    throw new Error(`Firestore保存エラー: ${errorMsg}`);
   }
 }
 
@@ -52,21 +100,16 @@ export async function deleteMaterialFromCloud(materialId: string): Promise<void>
     const docRef = doc(db, COLLECTIONS.MATERIALS, materialId);
     await deleteDoc(docRef);
     console.info(`[Firebase] Deleted material from Firestore: ${materialId}`);
-  } catch (err) {
-    console.error('[Firebase] Failed to delete material from Firestore:', err);
-    throw err;
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error('[Firebase] Failed to delete material from Firestore:', errorMsg);
+    throw new Error(`Firestore削除エラー: ${errorMsg}`);
   }
 }
 
-const isLegacyMockId = (id?: string) =>
-  !id ||
-  id === 'mat-math-1' ||
-  id === 'mat-eng-1' ||
-  id === 'mat-chem-1' ||
-  id === 'test-doc';
-
 /**
  * Fetches all study materials from Firebase Firestore once.
+ * No user-specific filter or where clause is applied, ensuring all users & devices see all shared materials.
  */
 export async function fetchMaterialsFromCloud(): Promise<StudyMaterial[]> {
   try {
@@ -78,19 +121,22 @@ export async function fetchMaterialsFromCloud(): Promise<StudyMaterial[]> {
         list.push(item);
       }
     });
+    list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
     return list;
-  } catch (err) {
-    console.warn('Firestore fetch materials notice:', err);
-    return [];
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error('[Firebase] Error fetching materials from cloud:', errorMsg);
+    throw new Error(`Firestoreデータ取得エラー: ${errorMsg}`);
   }
 }
 
 /**
  * Subscribes to real-time updates for study materials across all devices (PCs, tablets, smartphones).
- * Always notifies the callback with the full up-to-date cloud list.
+ * Broad collection listener without any user-specific or device-specific filtering.
  */
 export function subscribeToMaterials(
-  onUpdate: (materials: StudyMaterial[]) => void
+  onUpdate: (materials: StudyMaterial[]) => void,
+  onError?: (error: Error) => void
 ): () => void {
   try {
     const colRef = collection(db, COLLECTIONS.MATERIALS);
@@ -110,11 +156,17 @@ export function subscribeToMaterials(
       },
       (error) => {
         console.error('Firestore real-time materials subscription error:', error);
+        if (onError) {
+          onError(new Error(`リアルタイム同期エラー: ${error.message}`));
+        }
       }
     );
     return unsubscribe;
-  } catch (e) {
+  } catch (e: any) {
     console.error('Failed to attach Firestore listener:', e);
+    if (onError) {
+      onError(new Error(`Firestore接続初期化エラー: ${e?.message || String(e)}`));
+    }
     return () => {};
   }
 }

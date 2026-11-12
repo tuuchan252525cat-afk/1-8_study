@@ -94,3 +94,13 @@ export const getTabUrl = (tab: AppTab): string => {
   }
   return `${normalizedBase}#/${tab}`;
 };
+
+/**
+ * Detects whether the app is hosted on a static hosting environment without an Express backend
+ * (such as GitHub Pages or file: protocol).
+ */
+export const isStaticDeployment = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname.toLowerCase();
+  return host.includes('github.io') || window.location.protocol === 'file:';
+};

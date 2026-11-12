@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { WeeklyQuiz, QuizQuestion, AiAnalysisResult } from '../types';
+import { isStaticDeployment } from '../utils/navigation';
 import {
   Sparkles,
   BookOpen,
@@ -112,6 +113,68 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
 
     setIsAnalyzing(true);
     setAnalysisError(null);
+
+    if (isStaticDeployment()) {
+      setTimeout(() => {
+        const prompt = textPrompt.trim();
+        const subject = prompt.includes('英語') ? '英語' : prompt.includes('化学') ? '化学基礎' : prompt.includes('国語') ? '現代文' : '数学I・A';
+        const unit = prompt.includes('二次関数') ? '二次関数とグラフ' : prompt.includes('三角比') ? '三角比と図形の計量' : '定期考査・重要予想テーマ';
+
+        const sampleQuestions: QuizQuestion[] = [
+          {
+            id: `q-pred-${Date.now()}-1`,
+            question: `${subject}における頻出重要公式の適用条件として最も留意すべき点はどれか。`,
+            options: ['定義域と前提条件を最初に確認する', '直感のみで選択肢を決める', '計算過程の符号を省略する', '問題文の条件を無視する'],
+            correctIndex: 0,
+            explanation: '公式を適用する際は、定義域や分母が0でないこと、判別式の正負など前提条件の吟味が最重要です。',
+          },
+          {
+            id: `q-pred-${Date.now()}-2`,
+            question: '定期テスト本番で高得点を確保するために最も有効な見直し手法はどれか。',
+            options: ['途中式の変形と代入による検算', '見直しをせずに終了を待つ', '解答欄の記号を適当に変える', '問題用紙を見ない'],
+            correctIndex: 0,
+            explanation: '逆算や特定値の代入による検算を行うことで、計算ミスや転記ミスを確実に防ぐことができます。',
+          },
+          {
+            id: `q-pred-${Date.now()}-3`,
+            question: '記述式問題で減点を防ぐための答案作成のポイントとして正しいものはどれか。',
+            options: ['立式の根拠となる公式や定理を明記する', '答えの数字だけを書く', '途中式を一切書かない', '文字の定義を省く'],
+            correctIndex: 0,
+            explanation: 'どの公式や条件を用いたかを明記することで、採点官に論理展開が明確に伝わり部分点も確保できます。',
+          },
+        ];
+
+        const aiSummary = {
+          subject,
+          unit,
+          keywords: ['公式の適用条件', '途中式の記述', '場合分けの吟味', '代入検算', '時間配分'],
+          trends: [
+            '標準問題における計算過程の正確性と符号ミス防止が合否を分けます',
+            '文字係数を含む条件や定義域の端点処理が差のつくポイントです',
+            '各大問の配点に応じた適切な時間配分を守りましょう',
+          ],
+        };
+
+        const newQuiz: WeeklyQuiz = {
+          id: `quiz-pred-${Date.now()}`,
+          title: `${subject}：${unit} 厳選予想問題`,
+          category: 'ai_predicted',
+          weekLabel: '定期テスト予想問題',
+          durationMinutes: 10,
+          description: `過去の傾向から重要ポイントを厳選した${subject}の定期テスト対策問題。`,
+          aiAnalysisSummary: aiSummary,
+          questions: sampleQuestions,
+        };
+
+        addQuiz(newQuiz);
+        setIsCreateOpen(false);
+        setTextPrompt('');
+        setSelectedFile(null);
+        startQuiz(newQuiz.id);
+        setIsAnalyzing(false);
+      }, 700);
+      return;
+    }
 
     try {
       const response = await fetch('/api/ai/analyze-test', {

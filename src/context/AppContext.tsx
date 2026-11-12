@@ -35,6 +35,7 @@ import {
   getTabFromLocation,
   getTabUrl,
   VALID_TABS,
+  isStaticDeployment,
 } from '../utils/navigation';
 
 import {
@@ -113,6 +114,11 @@ interface AppContextType {
   syncWithServer: () => Promise<void>;
   exportBackupJson: () => void;
   importBackupJson: (file: File) => Promise<{ success: boolean; count: number; error?: string }>;
+
+  // Cloud Sync & Reliability
+  cloudSyncStatus: 'connected' | 'syncing' | 'error';
+  cloudSyncError: string | null;
+  retryCloudSync: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -146,6 +152,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [materials, setMaterials] = useState<StudyMaterial[]>([]);
   const [posts, setPosts] = useState<ForumPost[]>([]);
 
+  // Cloud Sync & Reliability State (surfaces Firestore connection & save issues directly on UI)
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'connected' | 'syncing' | 'error'>('syncing');
+  const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
+
   // Hydration status guard: prevents React initial empty state from wiping persisted data
   const isHydratedRef = useRef<boolean>(false);
   const [isStorageHydrated, setIsStorageHydrated] = useState<boolean>(false);
@@ -169,22 +179,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const localQuizzes = await getPersistentItem<WeeklyQuiz[]>(STORAGE_KEYS.QUIZZES, INITIAL_QUIZZES);
         const localCustomSubjects = await getPersistentItem<SubjectOption[]>(STORAGE_KEYS.CUSTOM_SUBJECTS, []);
 
-        // B. Fetch server persistent storage from /api/data & Firebase Cloud
+        // B. Fetch server persistent storage from /api/data (if running full-stack, skipped on static hosts like GitHub Pages)
         let serverData: any = null;
-        try {
-          const res = await fetch('/api/data');
-          if (res.ok) {
-            serverData = await res.json();
+        if (!isStaticDeployment()) {
+          try {
+            const res = await fetch('/api/data');
+            if (res.ok) {
+              serverData = await res.json();
+            }
+          } catch (e) {
+            console.warn('Server storage fetch notice:', e);
           }
-        } catch (e) {
-          console.warn('Server storage fetch notice:', e);
         }
 
         let cloudMaterials: StudyMaterial[] = [];
         try {
           cloudMaterials = await fetchMaterialsFromCloud();
-        } catch (e) {
+          setCloudSyncStatus('connected');
+          setCloudSyncError(null);
+        } catch (e: any) {
           console.warn('Firebase cloud materials fetch notice:', e);
+          setCloudSyncStatus('error');
+          setCloudSyncError(e?.message || 'Firestore接続エラー');
         }
 
         // C. Safe Union Merge (Union by ID, filtering out legacy sample items)
@@ -254,19 +270,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           isHydratedRef.current = true;
           setIsStorageHydrated(true);
 
-          // Sync any new client items to server
-          fetch('/api/data/sync', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              materials: mergedMaterials,
-              quizzes: mergedQuizzes,
-              testRecords: mergedRecords,
-              posts: mergedPosts,
-              customSubjects: mergedSubjects,
-              quizSubmissions: mergedSubs,
-            }),
-          }).catch(() => {});
+          // Sync any new client items to server if running on full-stack server
+          if (!isStaticDeployment()) {
+            fetch('/api/data/sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                materials: mergedMaterials,
+                quizzes: mergedQuizzes,
+                testRecords: mergedRecords,
+                posts: mergedPosts,
+                customSubjects: mergedSubjects,
+                quizSubmissions: mergedSubs,
+              }),
+            }).catch(() => {});
+          }
         }
       } catch (err) {
         console.error('Error hydrating storage:', err);
@@ -283,13 +301,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const isLegacySample = (id?: string) =>
       !id || id === 'mat-math-1' || id === 'mat-eng-1' || id === 'mat-chem-1' || id === 'test-doc';
 
-    const unsubscribe = subscribeToMaterials((cloudList) => {
-      const cleanList = (cloudList || []).filter((m) => m && m.id && !isLegacySample(m.id));
-      setMaterials(cleanList);
-      if (isHydratedRef.current) {
-        setPersistentItem(STORAGE_KEYS.MATERIALS, cleanList);
+    const unsubscribe = subscribeToMaterials(
+      (cloudList) => {
+        const cleanList = (cloudList || []).filter((m) => m && m.id && !isLegacySample(m.id));
+        setMaterials(cleanList);
+        setCloudSyncStatus('connected');
+        setCloudSyncError(null);
+        if (isHydratedRef.current) {
+          setPersistentItem(STORAGE_KEYS.MATERIALS, cleanList);
+        }
+      },
+      (err) => {
+        setCloudSyncStatus('error');
+        setCloudSyncError(err.message || 'Firestoreリアルタイム購読エラー');
       }
-    });
+    );
 
     return () => unsubscribe();
   }, []);
@@ -318,51 +344,61 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.TEST_RECORDS, testRecords);
-    fetch('/api/data/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ testRecords }),
-    }).catch(() => {});
+    if (!isStaticDeployment()) {
+      fetch('/api/data/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ testRecords }),
+      }).catch(() => {});
+    }
   }, [testRecords]);
 
   useEffect(() => {
     if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.QUIZ_SUBMISSIONS, quizSubmissions);
-    fetch('/api/data/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quizSubmissions }),
-    }).catch(() => {});
+    if (!isStaticDeployment()) {
+      fetch('/api/data/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quizSubmissions }),
+      }).catch(() => {});
+    }
   }, [quizSubmissions]);
 
   useEffect(() => {
     if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.QUIZZES, quizzes);
-    fetch('/api/data/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quizzes }),
-    }).catch(() => {});
+    if (!isStaticDeployment()) {
+      fetch('/api/data/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quizzes }),
+      }).catch(() => {});
+    }
   }, [quizzes]);
 
   useEffect(() => {
     if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.MATERIALS, materials);
-    fetch('/api/data/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ materials }),
-    }).catch(() => {});
+    if (!isStaticDeployment()) {
+      fetch('/api/data/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ materials }),
+      }).catch(() => {});
+    }
   }, [materials]);
 
   useEffect(() => {
     if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.POSTS, posts);
-    fetch('/api/data/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ posts }),
-    }).catch(() => {});
+    if (!isStaticDeployment()) {
+      fetch('/api/data/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ posts }),
+      }).catch(() => {});
+    }
   }, [posts]);
 
   useEffect(() => {
@@ -373,11 +409,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.CUSTOM_SUBJECTS, customSubjects);
-    fetch('/api/data/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customSubjects }),
-    }).catch(() => {});
+    if (!isStaticDeployment()) {
+      fetch('/api/data/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customSubjects }),
+      }).catch(() => {});
+    }
   }, [customSubjects]);
 
   // Current logged in student object
@@ -705,29 +743,38 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       authorNickname: author,
     };
 
-    // 1. Update React state immediately
-    setMaterials((prev) => {
-      const nextList = [newMat, ...prev.filter((m) => m.id !== newMat.id)];
-      setPersistentItem(STORAGE_KEYS.MATERIALS, nextList);
-      return nextList;
-    });
-
-    // 2. Persist to Firebase Cloud Firestore for instant real-time synchronization across all PCs
+    // 1. Persist directly to Firebase Cloud Firestore for real-time synchronization across all PCs
+    setCloudSyncStatus('syncing');
     try {
       await saveMaterialToCloud(newMat);
-    } catch (e) {
+      setCloudSyncStatus('connected');
+      setCloudSyncError(null);
+
+      // Update local state and IndexedDB after cloud confirmation
+      setMaterials((prev) => {
+        const nextList = [newMat, ...prev.filter((m) => m.id !== newMat.id)];
+        setPersistentItem(STORAGE_KEYS.MATERIALS, nextList);
+        return nextList;
+      });
+    } catch (e: any) {
+      const msg = e?.message || 'Firebaseクラウドへの保存に失敗しました';
+      setCloudSyncStatus('error');
+      setCloudSyncError(msg);
       console.error('Cloud material save error:', e);
+      throw new Error(msg);
     }
 
-    // 3. Immediately persist to server-side JSON storage
-    try {
-      await fetch('/api/data/materials', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newMat),
-      });
-    } catch (err) {
-      console.warn('Server material persist notice:', err);
+    // 2. Also persist to server-side JSON storage if running with Express backend
+    if (!isStaticDeployment()) {
+      try {
+        await fetch('/api/data/materials', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newMat),
+        });
+      } catch (err) {
+        console.warn('Server material persist notice:', err);
+      }
     }
   };
 
@@ -744,36 +791,64 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const target = next.find((m) => m.id === materialId);
       if (target) {
         saveMaterialToCloud(target).catch(() => {});
-        fetch('/api/data/materials', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(target),
-        }).catch(() => {});
+        if (!isStaticDeployment()) {
+          fetch('/api/data/materials', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(target),
+          }).catch(() => {});
+        }
       }
       return next;
     });
   };
 
   const deleteMaterial = async (materialId: string) => {
-    setMaterials((prev) => {
-      const filtered = prev.filter((m) => m.id !== materialId);
-      setPersistentItem(STORAGE_KEYS.MATERIALS, filtered);
-      return filtered;
-    });
-
     // Delete from Firebase Cloud Firestore
+    setCloudSyncStatus('syncing');
     try {
       await deleteMaterialFromCloud(materialId);
-    } catch (e) {
+      setCloudSyncStatus('connected');
+      setCloudSyncError(null);
+
+      setMaterials((prev) => {
+        const filtered = prev.filter((m) => m.id !== materialId);
+        setPersistentItem(STORAGE_KEYS.MATERIALS, filtered);
+        return filtered;
+      });
+    } catch (e: any) {
+      const msg = e?.message || 'Firebaseクラウドからの削除に失敗しました';
+      setCloudSyncStatus('error');
+      setCloudSyncError(msg);
       console.error('Cloud material delete error:', e);
+      throw new Error(msg);
     }
 
+    if (!isStaticDeployment()) {
+      try {
+        await fetch(`/api/data/materials/${encodeURIComponent(materialId)}`, {
+          method: 'DELETE',
+        });
+      } catch (e) {
+        console.warn('Server material delete notice:', e);
+      }
+    }
+  };
+
+  // Re-fetch all shared materials from Firestore manually (for recovery if network drops)
+  const retryCloudSync = async () => {
+    setCloudSyncStatus('syncing');
+    setCloudSyncError(null);
     try {
-      await fetch(`/api/data/materials/${encodeURIComponent(materialId)}`, {
-        method: 'DELETE',
-      });
-    } catch (e) {
-      console.warn('Server material delete notice:', e);
+      const cloudList = await fetchMaterialsFromCloud();
+      setMaterials(cloudList);
+      setCloudSyncStatus('connected');
+      if (isHydratedRef.current) {
+        setPersistentItem(STORAGE_KEYS.MATERIALS, cloudList);
+      }
+    } catch (e: any) {
+      setCloudSyncStatus('error');
+      setCloudSyncError(e?.message || 'Firestore再同期に失敗しました');
     }
   };
 
@@ -887,6 +962,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Sync With Server Manual Trigger
   const syncWithServer = async () => {
+    if (isStaticDeployment()) return;
     try {
       const res = await fetch('/api/data');
       if (res.ok) {
@@ -903,7 +979,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
       }
     } catch (e) {
-      console.warn('Manual sync error:', e);
+      console.warn('Manual sync notice:', e);
     }
   };
 
@@ -961,12 +1037,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setPersistentItem(STORAGE_KEYS.QUIZZES, parsed.quizzes);
       }
 
-      // Sync to server storage
-      await fetch('/api/data/restore', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parsed),
-      });
+      // Sync to server storage if backend exists
+      if (!isStaticDeployment()) {
+        try {
+          await fetch('/api/data/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(parsed),
+          });
+        } catch (e) {
+          console.warn('Server restore notice:', e);
+        }
+      }
 
       return { success: true, count };
     } catch (err: any) {
@@ -1025,6 +1107,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         syncWithServer,
         exportBackupJson,
         importBackupJson,
+        cloudSyncStatus,
+        cloudSyncError,
+        retryCloudSync,
       }}
     >
       {children}

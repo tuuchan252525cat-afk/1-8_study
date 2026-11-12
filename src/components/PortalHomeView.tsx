@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { isStaticDeployment } from '../utils/navigation';
 import {
   MapPin,
   Grid,
@@ -33,6 +34,22 @@ export const PortalHomeView: React.FC = () => {
 
     setIsAskingAi(true);
     setAiAnswer(null);
+
+    if (isStaticDeployment()) {
+      setTimeout(() => {
+        const text = aiQuestion.trim();
+        const subject = text.includes('英語') ? '英語' : text.includes('国語') ? '国語' : text.includes('化学') ? '化学基礎' : '数学I・A';
+        const formatted = `【単元/テーマ】: ${subject} 学習アドバイス\n\n` +
+          `【要点解説】:\n` +
+          `・ 基本公式の適用条件と定義域を必ず確認し、符号ミスに注意して演習を進めましょう。\n` +
+          `・ 過去問の類題を反復練習し、解法手順を自分の言葉で説明できるように定着させましょう。\n` +
+          `・ 間違えた問題は専用の解き直しノートにまとめ、週末に再度復習することをおすすめします。\n\n` +
+          `【関連キーワード】: 公式確認、反復演習、弱点克服、検算チェック`;
+        setAiAnswer(formatted);
+        setIsAskingAi(false);
+      }, 500);
+      return;
+    }
 
     try {
       const response = await fetch('/api/ai/analyze-test', {

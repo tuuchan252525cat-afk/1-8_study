@@ -16,6 +16,17 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '50mb' }));
 
+// Enable CORS and explicitly allow all standard HTTP methods to prevent 405 Method Not Allowed
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, HEAD');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 // AI Test Analysis & Predicted Quiz Generator Endpoint
 app.post('/api/ai/analyze-test', async (req, res) => {
   try {

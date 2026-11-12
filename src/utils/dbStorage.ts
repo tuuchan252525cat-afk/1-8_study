@@ -125,16 +125,16 @@ export async function setPersistentItem<T>(key: string, value: T): Promise<void>
   }
 }
 
-// Compress uploaded base64 images before saving to keep memory and storage light
+// Compress uploaded base64 images before saving so they stay well under Firestore's 1MB document limit
 export function compressImageBase64(
   dataUrl: string,
-  maxWidth = 1200,
-  maxHeight = 1600,
-  quality = 0.75
+  maxWidth = 1100,
+  maxHeight = 1500,
+  initialQuality = 0.7
 ): Promise<string> {
   return new Promise((resolve) => {
     // If not an image (e.g. PDF or plain text), return as is
-    if (!dataUrl.startsWith('data:image/')) {
+    if (!dataUrl || !dataUrl.startsWith('data:image/')) {
       resolve(dataUrl);
       return;
     }
@@ -143,14 +143,9 @@ export function compressImageBase64(
     img.crossOrigin = 'anonymous';
     img.onload = () => {
       let { width, height } = img;
-      if (width > maxWidth) {
-        height = Math.round((height * maxWidth) / width);
-        width = maxWidth;
-      }
-      if (height > maxHeight) {
-        width = Math.round((width * maxHeight) / height);
-        height = maxHeight;
-      }
+      const scale = Math.min(1, maxWidth / width, maxHeight / height);
+      width = Math.max(1, Math.round(width * scale));
+      height = Math.max(1, Math.round(height * scale));
 
       const canvas = document.createElement('canvas');
       canvas.width = width;
@@ -161,8 +156,32 @@ export function compressImageBase64(
         return;
       }
 
+      // Draw white background so transparent PNGs/scans don't get black background
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, height);
       ctx.drawImage(img, 0, 0, width, height);
-      const compressed = canvas.toDataURL('image/jpeg', quality);
+
+      let quality = initialQuality;
+      let compressed = canvas.toDataURL('image/jpeg', quality);
+
+      // Firestore document hard limit is 1,048,576 bytes. Keep base64 safely under 650KB (~650,000 characters).
+      if (compressed.length > 650000) {
+        quality = 0.55;
+        compressed = canvas.toDataURL('image/jpeg', quality);
+      }
+      if (compressed.length > 650000) {
+        const halfCanvas = document.createElement('canvas');
+        halfCanvas.width = Math.round(width * 0.75);
+        halfCanvas.height = Math.round(height * 0.75);
+        const hCtx = halfCanvas.getContext('2d');
+        if (hCtx) {
+          hCtx.fillStyle = '#ffffff';
+          hCtx.fillRect(0, 0, halfCanvas.width, halfCanvas.height);
+          hCtx.drawImage(canvas, 0, 0, halfCanvas.width, halfCanvas.height);
+          compressed = halfCanvas.toDataURL('image/jpeg', 0.5);
+        }
+      }
+
       resolve(compressed);
     };
     img.onerror = () => resolve(dataUrl);

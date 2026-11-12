@@ -37,8 +37,10 @@ export async function saveMaterialToCloud(material: StudyMaterial): Promise<void
   try {
     const docRef = doc(db, COLLECTIONS.MATERIALS, material.id);
     await setDoc(docRef, material, { merge: true });
+    console.info(`[Firebase] Saved material to Firestore: ${material.id} (${material.title})`);
   } catch (err) {
-    console.warn('Firestore material save notice:', err);
+    console.error('[Firebase] Failed to save material to Firestore:', err);
+    throw err;
   }
 }
 
@@ -49,10 +51,19 @@ export async function deleteMaterialFromCloud(materialId: string): Promise<void>
   try {
     const docRef = doc(db, COLLECTIONS.MATERIALS, materialId);
     await deleteDoc(docRef);
+    console.info(`[Firebase] Deleted material from Firestore: ${materialId}`);
   } catch (err) {
-    console.warn('Firestore material delete notice:', err);
+    console.error('[Firebase] Failed to delete material from Firestore:', err);
+    throw err;
   }
 }
+
+const isLegacyMockId = (id?: string) =>
+  !id ||
+  id === 'mat-math-1' ||
+  id === 'mat-eng-1' ||
+  id === 'mat-chem-1' ||
+  id === 'test-doc';
 
 /**
  * Fetches all study materials from Firebase Firestore once.
@@ -62,7 +73,10 @@ export async function fetchMaterialsFromCloud(): Promise<StudyMaterial[]> {
     const snap = await getDocs(collection(db, COLLECTIONS.MATERIALS));
     const list: StudyMaterial[] = [];
     snap.forEach((d) => {
-      list.push(d.data() as StudyMaterial);
+      const item = d.data() as StudyMaterial;
+      if (item && item.id && !isLegacyMockId(item.id)) {
+        list.push(item);
+      }
     });
     return list;
   } catch (err) {
@@ -72,7 +86,8 @@ export async function fetchMaterialsFromCloud(): Promise<StudyMaterial[]> {
 }
 
 /**
- * Subscribes to real-time updates for study materials across all devices.
+ * Subscribes to real-time updates for study materials across all devices (PCs, tablets, smartphones).
+ * Always notifies the callback with the full up-to-date cloud list.
  */
 export function subscribeToMaterials(
   onUpdate: (materials: StudyMaterial[]) => void
@@ -84,19 +99,22 @@ export function subscribeToMaterials(
       (snapshot) => {
         const list: StudyMaterial[] = [];
         snapshot.forEach((d) => {
-          list.push(d.data() as StudyMaterial);
+          const item = d.data() as StudyMaterial;
+          if (item && item.id && !isLegacyMockId(item.id)) {
+            list.push(item);
+          }
         });
-        if (list.length > 0) {
-          onUpdate(list);
-        }
+        // Sort newest first
+        list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        onUpdate(list);
       },
       (error) => {
-        console.warn('Firestore real-time materials subscription notice:', error);
+        console.error('Firestore real-time materials subscription error:', error);
       }
     );
     return unsubscribe;
   } catch (e) {
-    console.warn('Failed to attach Firestore listener:', e);
+    console.error('Failed to attach Firestore listener:', e);
     return () => {};
   }
 }

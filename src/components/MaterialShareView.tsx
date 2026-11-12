@@ -93,10 +93,14 @@ export const MaterialShareView: React.FC = () => {
 
     setIsSaving(true);
     try {
-      const finalType = newType;
+      const isPdf =
+        newType === 'pdf' ||
+        uploadedFileName.toLowerCase().endsWith('.pdf') ||
+        uploadedFilePreview.startsWith('data:application/pdf');
+      const finalType: 'pdf' | 'image' | 'summary' = isPdf ? 'pdf' : newType;
       const finalSize =
         uploadedFileSize ||
-        (finalType === 'pdf' ? '1.4 MB' : finalType === 'image' ? '2.3 MB' : '450 KB');
+        (finalType === 'pdf' ? '1.4 MB' : finalType === 'image' ? '1.2 MB' : '450 KB');
 
       await addMaterial({
         title: newTitle.trim(),
@@ -104,8 +108,8 @@ export const MaterialShareView: React.FC = () => {
         description: newDesc.trim() || '定期テスト問題用紙・対策プリント',
         fileType: finalType,
         fileSize: finalSize,
-        imageUrl: uploadedFilePreview || undefined,
-        pdfUrl: finalType === 'pdf' ? uploadedFilePreview : undefined,
+        imageUrl: isPdf ? undefined : (uploadedFilePreview || undefined),
+        pdfUrl: isPdf ? (uploadedFilePreview || undefined) : undefined,
         contentPreview: newContent.trim() || '定期考査の実物問題用紙プレビューです。',
         documentSections: [
           {

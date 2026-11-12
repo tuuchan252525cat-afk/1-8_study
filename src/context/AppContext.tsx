@@ -162,7 +162,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         // A. Load from client storage (IndexedDB / localStorage)
         const localRecords = await getPersistentItem<TestRecord[]>(STORAGE_KEYS.TEST_RECORDS, INITIAL_TEST_RECORDS);
-        const localMaterials = await getPersistentItem<StudyMaterial[]>(STORAGE_KEYS.MATERIALS, INITIAL_MATERIALS);
+        const localMaterials = await getPersistentItem<StudyMaterial[]>(STORAGE_KEYS.MATERIALS, []);
         const localPosts = await getPersistentItem<ForumPost[]>(STORAGE_KEYS.POSTS, INITIAL_POSTS);
         const localSubs = await getPersistentItem<QuizResult[]>(STORAGE_KEYS.QUIZ_SUBMISSIONS, INITIAL_QUIZ_SUBMISSIONS);
         const localActiveTest = await getPersistentItem<string>(STORAGE_KEYS.ACTIVE_TEST, '第1回 定期考査');
@@ -187,17 +187,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           console.warn('Firebase cloud materials fetch notice:', e);
         }
 
-        // C. Safe Union Merge (Union by ID so no data is ever lost across device/browser updates)
+        // C. Safe Union Merge (Union by ID, filtering out legacy sample items)
+        const isLegacySample = (id?: string) =>
+          !id || id === 'mat-math-1' || id === 'mat-eng-1' || id === 'mat-chem-1' || id === 'test-doc';
+
         const materialsMap = new Map<string, StudyMaterial>();
-        INITIAL_MATERIALS.forEach((m) => { if (m?.id) materialsMap.set(m.id, m); });
-        (serverData?.materials || []).forEach((m: StudyMaterial) => { if (m?.id) materialsMap.set(m.id, m); });
-        (localMaterials || []).forEach((m) => { if (m?.id) materialsMap.set(m.id, m); });
-        (cloudMaterials || []).forEach((m) => { if (m?.id) materialsMap.set(m.id, m); });
+        (serverData?.materials || []).forEach((m: StudyMaterial) => {
+          if (m?.id && !isLegacySample(m.id)) materialsMap.set(m.id, m);
+        });
+        (localMaterials || []).forEach((m) => {
+          if (m?.id && !isLegacySample(m.id)) materialsMap.set(m.id, m);
+        });
+        (cloudMaterials || []).forEach((m) => {
+          if (m?.id && !isLegacySample(m.id)) materialsMap.set(m.id, m);
+        });
         const mergedMaterials = Array.from(materialsMap.values());
 
-        // Seed initial materials to cloud if cloud was completely empty
+        // Sync any real user materials to cloud if they were added offline
         if (cloudMaterials.length === 0 && mergedMaterials.length > 0) {
-          mergedMaterials.forEach((m) => saveMaterialToCloud(m).catch(() => {}));
+          mergedMaterials.forEach((m) => {
+            if (!isLegacySample(m.id)) {
+              saveMaterialToCloud(m).catch(() => {});
+            }
+          });
         }
 
         const quizzesMap = new Map<string, WeeklyQuiz>();
@@ -268,18 +280,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Real-time Firestore subscription: when ANY PC uploads or deletes a material, all PCs update instantly
   useEffect(() => {
+    const isLegacySample = (id?: string) =>
+      !id || id === 'mat-math-1' || id === 'mat-eng-1' || id === 'mat-chem-1' || id === 'test-doc';
+
     const unsubscribe = subscribeToMaterials((cloudList) => {
-      if (cloudList && cloudList.length > 0) {
-        setMaterials((prev) => {
-          const map = new Map<string, StudyMaterial>();
-          prev.forEach((m) => { if (m?.id) map.set(m.id, m); });
-          cloudList.forEach((m) => { if (m?.id) map.set(m.id, m); });
-          const updated = Array.from(map.values());
-          if (isHydratedRef.current) {
-            setPersistentItem(STORAGE_KEYS.MATERIALS, updated);
-          }
-          return updated;
-        });
+      const cleanList = (cloudList || []).filter((m) => m && m.id && !isLegacySample(m.id));
+      setMaterials(cleanList);
+      if (isHydratedRef.current) {
+        setPersistentItem(STORAGE_KEYS.MATERIALS, cleanList);
       }
     });
 
@@ -673,7 +681,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   };
 
-  // Materials with double-layer persistent IndexedDB & server-side JSON backup
+  // Materials with double-layer persistent IndexedDB & server-side JSON backup & Firebase real-time sync
   const addMaterial = async (
     material: Omit<StudyMaterial, 'id' | 'createdAt' | 'downloadCount' | 'authorNickname'>
   ) => {
@@ -682,9 +690,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     let processedImg = material.imageUrl;
     if (processedImg && processedImg.startsWith('data:image/')) {
       try {
-        processedImg = await compressImageBase64(processedImg, 1200, 1600, 0.75);
+        processedImg = await compressImageBase64(processedImg, 1100, 1500, 0.7);
       } catch (e) {
-        console.warn('Image compression failed, using original', e);
+        console.warn('Image compression notice:', e);
       }
     }
 
@@ -699,16 +707,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // 1. Update React state immediately
     setMaterials((prev) => {
-      const nextList = [newMat, ...prev];
-      // 2. Save directly to persistent IndexedDB
+      const nextList = [newMat, ...prev.filter((m) => m.id !== newMat.id)];
       setPersistentItem(STORAGE_KEYS.MATERIALS, nextList);
       return nextList;
     });
 
-    // 3. Persist to Firebase Cloud Firestore for instant real-time synchronization across all PCs
-    saveMaterialToCloud(newMat).catch((e) => console.warn('Cloud material save error:', e));
+    // 2. Persist to Firebase Cloud Firestore for instant real-time synchronization across all PCs
+    try {
+      await saveMaterialToCloud(newMat);
+    } catch (e) {
+      console.error('Cloud material save error:', e);
+    }
 
-    // 4. Immediately persist to server-side JSON storage
+    // 3. Immediately persist to server-side JSON storage
     try {
       await fetch('/api/data/materials', {
         method: 'POST',
@@ -732,6 +743,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setPersistentItem(STORAGE_KEYS.MATERIALS, next);
       const target = next.find((m) => m.id === materialId);
       if (target) {
+        saveMaterialToCloud(target).catch(() => {});
         fetch('/api/data/materials', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -742,18 +754,27 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   };
 
-  const deleteMaterial = (materialId: string) => {
+  const deleteMaterial = async (materialId: string) => {
     setMaterials((prev) => {
       const filtered = prev.filter((m) => m.id !== materialId);
       setPersistentItem(STORAGE_KEYS.MATERIALS, filtered);
       return filtered;
     });
-    // Delete from Firebase Cloud Firestore
-    deleteMaterialFromCloud(materialId).catch((e) => console.warn('Cloud material delete error:', e));
 
-    fetch(`/api/data/materials/${encodeURIComponent(materialId)}`, {
-      method: 'DELETE',
-    }).catch(() => {});
+    // Delete from Firebase Cloud Firestore
+    try {
+      await deleteMaterialFromCloud(materialId);
+    } catch (e) {
+      console.error('Cloud material delete error:', e);
+    }
+
+    try {
+      await fetch(`/api/data/materials/${encodeURIComponent(materialId)}`, {
+        method: 'DELETE',
+      });
+    } catch (e) {
+      console.warn('Server material delete notice:', e);
+    }
   };
 
   // Forum

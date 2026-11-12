@@ -10,7 +10,7 @@ import {
   getDocs,
   Firestore,
 } from 'firebase/firestore';
-import { StudyMaterial, WeeklyQuiz, TestRecord, ForumPost, QuizResult } from '../types';
+import { Student, StudyMaterial, WeeklyQuiz, TestRecord, ForumPost, QuizResult } from '../types';
 
 /**
  * Direct hardcoded Firebase configuration for 1-8 SITE.
@@ -44,6 +44,7 @@ export const COLLECTIONS = {
   POSTS: 'posts',
   CUSTOM_SUBJECTS: 'customSubjects',
   QUIZ_SUBMISSIONS: 'quizSubmissions',
+  STUDENTS: 'students',
 } as const;
 
 /**
@@ -170,3 +171,96 @@ export function subscribeToMaterials(
     return () => {};
   }
 }
+
+/**
+ * Saves or updates student account profile (nickname, password, etc.) in Firebase Firestore.
+ * Keyed by attendanceNumber as a string (e.g., "5").
+ */
+export async function saveStudentToCloud(studentData: Partial<Student> & { attendanceNumber: number }): Promise<void> {
+  try {
+    const payload = sanitizeForFirestore({
+      attendanceNumber: studentData.attendanceNumber,
+      nickname: studentData.nickname,
+      password: studentData.password,
+      hasCustomPassword: studentData.hasCustomPassword,
+      avatarColor: studentData.avatarColor,
+      updatedAt: new Date().toISOString(),
+    });
+    const docRef = doc(db, COLLECTIONS.STUDENTS, String(studentData.attendanceNumber));
+    await setDoc(docRef, payload, { merge: true });
+    console.info(`[Firebase] Saved student #${studentData.attendanceNumber} to cloud:`, studentData.nickname);
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error(`[Firebase] Failed to save student #${studentData.attendanceNumber}:`, errorMsg);
+    throw new Error(`生徒アカウントのクラウド保存エラー: ${errorMsg}`);
+  }
+}
+
+/**
+ * Fetches all student account profiles from Firebase Firestore once.
+ */
+export async function fetchStudentsFromCloud(): Promise<Partial<Student>[]> {
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.STUDENTS));
+    const list: Partial<Student>[] = [];
+    snap.forEach((d) => {
+      const data = d.data();
+      if (data && data.attendanceNumber) {
+        list.push({
+          attendanceNumber: Number(data.attendanceNumber),
+          nickname: data.nickname,
+          password: data.password,
+          hasCustomPassword: data.hasCustomPassword,
+          avatarColor: data.avatarColor,
+        });
+      }
+    });
+    return list;
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error('[Firebase] Error fetching students from cloud:', errorMsg);
+    return [];
+  }
+}
+
+/**
+ * Subscribes to real-time updates for student accounts across all devices.
+ */
+export function subscribeToStudents(
+  onUpdate: (students: Partial<Student>[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  try {
+    const colRef = collection(db, COLLECTIONS.STUDENTS);
+    const unsubscribe = onSnapshot(
+      colRef,
+      (snapshot) => {
+        const list: Partial<Student>[] = [];
+        snapshot.forEach((d) => {
+          const data = d.data();
+          if (data && data.attendanceNumber) {
+            list.push({
+              attendanceNumber: Number(data.attendanceNumber),
+              nickname: data.nickname,
+              password: data.password,
+              hasCustomPassword: data.hasCustomPassword,
+              avatarColor: data.avatarColor,
+            });
+          }
+        });
+        onUpdate(list);
+      },
+      (error) => {
+        console.error('Firestore students real-time subscription error:', error);
+        if (onError) {
+          onError(new Error(`生徒データ同期エラー: ${error.message}`));
+        }
+      }
+    );
+    return unsubscribe;
+  } catch (e: any) {
+    console.error('Failed to attach students Firestore listener:', e);
+    return () => {};
+  }
+}
+

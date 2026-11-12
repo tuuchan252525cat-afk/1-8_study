@@ -43,6 +43,9 @@ import {
   deleteMaterialFromCloud,
   fetchMaterialsFromCloud,
   subscribeToMaterials,
+  saveStudentToCloud,
+  fetchStudentsFromCloud,
+  subscribeToStudents,
 } from '../utils/firebase';
 
 import { AppTab } from '../types';
@@ -179,7 +182,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const localQuizzes = await getPersistentItem<WeeklyQuiz[]>(STORAGE_KEYS.QUIZZES, INITIAL_QUIZZES);
         const localCustomSubjects = await getPersistentItem<SubjectOption[]>(STORAGE_KEYS.CUSTOM_SUBJECTS, []);
 
-        // B. Fetch server persistent storage from /api/data (if running full-stack, skipped on static hosts like GitHub Pages)
+        // B. Fetch server persistent storage & Cloud Firestore students and materials
         let serverData: any = null;
         if (!isStaticDeployment()) {
           try {
@@ -191,6 +194,43 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             console.warn('Server storage fetch notice:', e);
           }
         }
+
+        let cloudStudents: Partial<Student>[] = [];
+        try {
+          cloudStudents = await fetchStudentsFromCloud();
+        } catch (e) {
+          console.warn('Firebase cloud students fetch notice:', e);
+        }
+
+        // Merge cloudStudents into INITIAL_STUDENTS & savedStudents & savedPasses
+        const mergedPasses: Record<number, string> = { ...savedPasses };
+        const mergedStudents = INITIAL_STUDENTS.map((s) => {
+          const localObj = (savedStudents || []).find((ls) => ls.attendanceNumber === s.attendanceNumber);
+          const cloudObj = cloudStudents.find((cs) => cs.attendanceNumber === s.attendanceNumber);
+
+          let nickname = localObj?.nickname || s.nickname;
+          let password = mergedPasses[s.attendanceNumber] || s.password || '0000';
+          let hasCustomPassword = localObj?.hasCustomPassword || Boolean(mergedPasses[s.attendanceNumber]);
+
+          if (cloudObj) {
+            if (cloudObj.nickname) nickname = cloudObj.nickname;
+            if (cloudObj.password) {
+              password = cloudObj.password;
+              mergedPasses[s.attendanceNumber] = cloudObj.password;
+              hasCustomPassword = true;
+            }
+            if (cloudObj.hasCustomPassword !== undefined) {
+              hasCustomPassword = cloudObj.hasCustomPassword;
+            }
+          }
+
+          return {
+            ...s,
+            nickname,
+            password,
+            hasCustomPassword,
+          };
+        });
 
         let cloudMaterials: StudyMaterial[] = [];
         try {
@@ -254,9 +294,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const mergedSubjects = Array.from(subjectsMap.values());
 
         if (isMounted) {
-          setStudents(savedStudents);
+          setStudents(mergedStudents);
           setCurrentStudentNum(savedNum);
-          setPasswords(savedPasses);
+          setPasswords(mergedPasses);
           setIsLoggedIn(savedLoggedIn);
           setTestRecords(mergedRecords);
           setMaterials(mergedMaterials);
@@ -294,6 +334,39 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
     hydrateStorage();
     return () => { isMounted = false; };
+  }, []);
+
+  // Real-time Firestore subscription for student account profiles (nicknames & passwords)
+  useEffect(() => {
+    const unsubscribe = subscribeToStudents((cloudList) => {
+      if (!cloudList || cloudList.length === 0) return;
+
+      setStudents((prev) =>
+        prev.map((s) => {
+          const cloudObj = cloudList.find((c) => c.attendanceNumber === s.attendanceNumber);
+          if (!cloudObj) return s;
+          return {
+            ...s,
+            nickname: cloudObj.nickname || s.nickname,
+            password: cloudObj.password || s.password || '0000',
+            hasCustomPassword:
+              cloudObj.hasCustomPassword ?? (cloudObj.password ? true : s.hasCustomPassword),
+          };
+        })
+      );
+
+      setPasswords((prev) => {
+        const next = { ...prev };
+        cloudList.forEach((c) => {
+          if (c.attendanceNumber && c.password) {
+            next[c.attendanceNumber] = c.password;
+          }
+        });
+        return next;
+      });
+    });
+
+    return () => unsubscribe();
   }, []);
 
   // Real-time Firestore subscription: when ANY PC uploads or deletes a material, all PCs update instantly
@@ -478,7 +551,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return { success: false, error: '指定された出席番号が存在しません' };
     }
 
-    const expectedPass = passwords[attendanceNumber] || '0000';
+    const expectedPass = passwords[attendanceNumber] || student.password || '0000';
     if (!password || password.trim() !== expectedPass) {
       return { success: false, error: 'パスワードが正しくありません。（初期パスワード: 0000）' };
     }
@@ -496,24 +569,89 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setCurrentStudentNum(attendanceNumber);
   };
 
-  const updateNickname = (newNickname: string) => {
+  const updateNickname = async (newNickname: string) => {
     if (!currentStudentNum) return;
     const trimmed = newNickname.trim();
     if (!trimmed) return;
-    setStudents((prev) =>
-      prev.map((s) => (s.attendanceNumber === currentStudentNum ? { ...s, nickname: trimmed } : s))
+
+    // Update local React state & IndexedDB
+    setStudents((prev) => {
+      const next = prev.map((s) =>
+        s.attendanceNumber === currentStudentNum ? { ...s, nickname: trimmed } : s
+      );
+      setPersistentItem(STORAGE_KEYS.STUDENTS, next);
+      return next;
+    });
+
+    // Update authorNickname for materials and posts authored by current student
+    setMaterials((prev) =>
+      prev.map((m) =>
+        m.authorStudentNumber === currentStudentNum ? { ...m, authorNickname: trimmed } : m
+      )
     );
+
+    setPosts((prev) =>
+      prev.map((p) => {
+        const isPostAuthor = p.studentNumber === currentStudentNum;
+        const updatedComments = p.comments.map((c) =>
+          c.studentNumber === currentStudentNum ? { ...c, authorNickname: trimmed } : c
+        );
+        if (isPostAuthor || updatedComments !== p.comments) {
+          return {
+            ...p,
+            authorNickname: isPostAuthor ? trimmed : p.authorNickname,
+            comments: updatedComments,
+          };
+        }
+        return p;
+      })
+    );
+
+    // Save to Firebase Firestore Cloud
+    try {
+      await saveStudentToCloud({
+        attendanceNumber: currentStudentNum,
+        nickname: trimmed,
+        password: passwords[currentStudentNum] || '0000',
+      });
+    } catch (e) {
+      console.error('Failed to sync nickname to Firestore:', e);
+    }
   };
 
-  const updatePassword = (newPassword: string) => {
+  const updatePassword = async (newPassword: string) => {
     if (!currentStudentNum) return;
-    setPasswords((prev) => ({
-      ...prev,
-      [currentStudentNum]: newPassword,
-    }));
-    setStudents((prev) =>
-      prev.map((s) => (s.attendanceNumber === currentStudentNum ? { ...s, hasCustomPassword: true } : s))
-    );
+    const trimmed = newPassword.trim();
+    if (!trimmed) return;
+
+    // Update local passwords & students state
+    setPasswords((prev) => {
+      const next = { ...prev, [currentStudentNum]: trimmed };
+      setPersistentItem(STORAGE_KEYS.PASSWORDS, next);
+      return next;
+    });
+
+    setStudents((prev) => {
+      const next = prev.map((s) =>
+        s.attendanceNumber === currentStudentNum
+          ? { ...s, password: trimmed, hasCustomPassword: true }
+          : s
+      );
+      setPersistentItem(STORAGE_KEYS.STUDENTS, next);
+      return next;
+    });
+
+    // Save to Firebase Firestore Cloud
+    try {
+      await saveStudentToCloud({
+        attendanceNumber: currentStudentNum,
+        nickname: currentStudent?.nickname || `出席番号${currentStudentNum}番`,
+        password: trimmed,
+        hasCustomPassword: true,
+      });
+    } catch (e) {
+      console.error('Failed to sync password to Firestore:', e);
+    }
   };
 
   // Custom Subjects Management

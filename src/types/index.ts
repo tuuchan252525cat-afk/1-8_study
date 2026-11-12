@@ -16,6 +16,7 @@ export interface Student {
   nickname: string;
   avatarColor: string;
   hasCustomPassword?: boolean;
+  password?: string;
 }
 
 export interface SubjectScores {
@@ -155,6 +156,7 @@ export interface StudyMaterial {
   fileType: 'pdf' | 'image' | 'summary';
   fileSize: string;
   authorNickname: string;
+  authorStudentNumber?: number;
   createdAt: string;
   downloadCount: number;
   contentPreview?: string;

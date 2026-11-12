@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 
 export const ForumView: React.FC = () => {
-  const { posts, addPost, addComment, toggleReaction, allSubjects } = useApp();
+  const { posts, addPost, addComment, toggleReaction, allSubjects, students } = useApp();
 
   const [activeTag, setActiveTag] = useState<string>('すべて');
   const [isNewPostOpen, setIsNewPostOpen] = useState(false);
@@ -139,7 +139,12 @@ export const ForumView: React.FC = () => {
                   <div className="text-[11px] font-black text-stone-400 uppercase tracking-tight flex items-center gap-1.5">
                     <span>{new Date(post.createdAt).toLocaleDateString('ja-JP')}</span>
                     <span aria-hidden="true">·</span>
-                    <span>投稿者: {post.authorNickname}</span>
+                    <span>
+                      投稿者:{' '}
+                      {(post.studentNumber &&
+                        students.find((s) => s.attendanceNumber === post.studentNumber)?.nickname) ||
+                        post.authorNickname}
+                    </span>
                   </div>
                   <span className="text-[11px] font-black text-[#1c603a] bg-[#f4f8f5] px-2.5 py-0.5 rounded-full border border-[#1c603a]/20">
                     ◎ {post.subjectTag}
@@ -205,7 +210,10 @@ export const ForumView: React.FC = () => {
                           <div key={comment.id} className="text-xs space-y-1">
                             <div className="flex items-center gap-2 text-[11px] text-stone-400 font-bold">
                               <span className="text-slate-800 font-black">
-                                {comment.authorNickname}
+                                {(comment.studentNumber &&
+                                  students.find((s) => s.attendanceNumber === comment.studentNumber)
+                                    ?.nickname) ||
+                                  comment.authorNickname}
                               </span>
                               <span aria-hidden="true">·</span>
                               <span>

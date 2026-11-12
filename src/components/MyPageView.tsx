@@ -27,21 +27,21 @@ export const MyPageView: React.FC = () => {
 
   if (!currentStudent) return null;
 
-  const handleNicknameSave = (e: React.FormEvent) => {
+  const handleNicknameSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nicknameInput.trim()) return;
-    updateNickname(nicknameInput.trim());
+    await updateNickname(nicknameInput.trim());
     setNicknameSaved(true);
-    setTimeout(() => setNicknameSaved(false), 1500);
+    setTimeout(() => setNicknameSaved(false), 2000);
   };
 
-  const handlePasswordSave = (e: React.FormEvent) => {
+  const handlePasswordSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPassword.trim()) return;
-    updatePassword(newPassword.trim());
+    await updatePassword(newPassword.trim());
     setPasswordSaved(true);
     setNewPassword('');
-    setTimeout(() => setPasswordSaved(false), 1500);
+    setTimeout(() => setPasswordSaved(false), 2000);
   };
 
   const engStanding = getMyQuizStanding('quiz-eng-w4');

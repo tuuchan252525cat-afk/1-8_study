@@ -54,3 +54,7 @@
   animation: fadeIn 0.18s ease-out forwards;
 }
 
+.pinch-zoom-surface {
+  touch-action: pan-x pan-y pinch-zoom;
+  -webkit-overflow-scrolling: touch;
+}

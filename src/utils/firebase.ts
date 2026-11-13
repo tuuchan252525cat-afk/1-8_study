@@ -10,7 +10,7 @@ import {
   getDocs,
   Firestore,
 } from 'firebase/firestore';
-import { Student, StudyMaterial, StudentPrediction, WeeklyQuiz, TestRecord, ForumPost, QuizResult } from '../types';
+import { Student, StudyMaterial, StudentPrediction, WeeklyQuiz, TestRecord, ForumPost, QuizResult, PeriodicTestSchedule } from '../types';
 
 /**
  * Direct hardcoded Firebase configuration for 1-8 SITE.
@@ -46,6 +46,7 @@ export const COLLECTIONS = {
   QUIZ_SUBMISSIONS: 'quizSubmissions',
   STUDENTS: 'students',
   STUDENT_PREDICTIONS: 'student_predictions',
+  PERIODIC_TESTS: 'periodicTests',
 } as const;
 
 /**
@@ -353,5 +354,335 @@ export function subscribeToStudentPredictions(
     return () => {};
   }
 }
+
+/**
+ * Saves or updates a WeeklyQuiz directly in Firebase Firestore (`quizzes` collection).
+ */
+export async function saveQuizToCloud(quiz: WeeklyQuiz): Promise<void> {
+  try {
+    const payload = sanitizeForFirestore({
+      ...quiz,
+      updatedAt: new Date().toISOString(),
+    });
+    const docRef = doc(db, COLLECTIONS.QUIZZES, quiz.id);
+    await setDoc(docRef, payload, { merge: true });
+    console.info(`[Firebase] Saved quiz to Firestore: ${quiz.id} (${quiz.title})`);
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error('[Firebase] Failed to save quiz to Firestore:', errorMsg, quiz);
+    throw new Error(`小テストのクラウド保存エラー: ${errorMsg}`);
+  }
+}
+
+/**
+ * Deletes a WeeklyQuiz from Firebase Firestore (`quizzes` collection).
+ */
+export async function deleteQuizFromCloud(quizId: string): Promise<void> {
+  try {
+    const docRef = doc(db, COLLECTIONS.QUIZZES, quizId);
+    await deleteDoc(docRef);
+    console.info(`[Firebase] Deleted quiz from Firestore: ${quizId}`);
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error('[Firebase] Failed to delete quiz from Firestore:', errorMsg);
+    throw new Error(`小テストの削除エラー: ${errorMsg}`);
+  }
+}
+
+/**
+ * Fetches all WeeklyQuizzes from Firebase Firestore once.
+ */
+export async function fetchQuizzesFromCloud(): Promise<WeeklyQuiz[]> {
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.QUIZZES));
+    const list: WeeklyQuiz[] = [];
+    snap.forEach((d) => {
+      const item = d.data() as WeeklyQuiz;
+      if (item && item.id && Array.isArray(item.questions)) {
+        list.push(item);
+      }
+    });
+    return list;
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error('[Firebase] Error fetching quizzes from cloud:', errorMsg);
+    throw new Error(`小テストのクラウド取得エラー: ${errorMsg}`);
+  }
+}
+
+/**
+ * Subscribes to real-time updates for WeeklyQuizzes across all devices.
+ */
+export function subscribeToQuizzes(
+  onUpdate: (quizzes: WeeklyQuiz[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  try {
+    const colRef = collection(db, COLLECTIONS.QUIZZES);
+    const unsubscribe = onSnapshot(
+      colRef,
+      (snapshot) => {
+        const list: WeeklyQuiz[] = [];
+        snapshot.forEach((d) => {
+          const item = d.data() as WeeklyQuiz;
+          if (item && item.id && Array.isArray(item.questions)) {
+            list.push(item);
+          }
+        });
+        onUpdate(list);
+      },
+      (error) => {
+        console.error('Firestore quizzes real-time subscription error:', error);
+        if (onError) {
+          onError(new Error(`小テストリアルタイム同期エラー: ${error.message}`));
+        }
+      }
+    );
+    return unsubscribe;
+  } catch (e: any) {
+    console.error('Failed to attach quizzes Firestore listener:', e);
+    return () => {};
+  }
+}
+
+/**
+ * Normalizes a Firestore doc ID so it always satisfies `^[a-zA-Z0-9_-]+$` and <= 128 chars.
+ */
+function toSafeFirestoreId(raw: string): string {
+  return raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 128);
+}
+
+/**
+ * Saves a student's quiz result (bestScore, attemptCount, category, quizTitle) to Firebase Firestore.
+ */
+export async function saveQuizSubmissionToCloud(submission: QuizResult): Promise<void> {
+  try {
+    const docId = toSafeFirestoreId(`${submission.quizId}_student_${submission.studentNumber}`);
+    const payload = sanitizeForFirestore({
+      ...submission,
+      id: docId,
+      updatedAt: new Date().toISOString(),
+    });
+    const docRef = doc(db, COLLECTIONS.QUIZ_SUBMISSIONS, docId);
+    await setDoc(docRef, payload, { merge: true });
+  } catch (err: any) {
+    console.error('[Firebase] Failed to save quiz submission:', err?.message || err);
+  }
+}
+
+/**
+ * Fetches all quiz submissions from Firebase Firestore once.
+ */
+export async function fetchQuizSubmissionsFromCloud(): Promise<QuizResult[]> {
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.QUIZ_SUBMISSIONS));
+    const list: QuizResult[] = [];
+    snap.forEach((d) => {
+      const item = d.data() as QuizResult;
+      if (item && item.quizId && item.studentNumber) {
+        list.push({
+          ...item,
+          id: item.id || d.id,
+        });
+      }
+    });
+    return list;
+  } catch (err: any) {
+    console.error('[Firebase] Error fetching quiz submissions:', err?.message || err);
+    return [];
+  }
+}
+
+/**
+ * Subscribes to real-time updates for quiz submissions across all devices.
+ */
+export function subscribeToQuizSubmissions(
+  onUpdate: (submissions: QuizResult[]) => void
+): () => void {
+  try {
+    const colRef = collection(db, COLLECTIONS.QUIZ_SUBMISSIONS);
+    return onSnapshot(
+      colRef,
+      (snapshot) => {
+        const list: QuizResult[] = [];
+        snapshot.forEach((d) => {
+          const item = d.data() as QuizResult;
+          if (item && item.quizId && item.studentNumber) {
+            list.push({
+              ...item,
+              id: item.id || d.id,
+            });
+          }
+        });
+        onUpdate(list);
+      },
+      (error) => {
+        console.error('Firestore quizSubmissions subscription error:', error);
+      }
+    );
+  } catch (e: any) {
+    console.error('Failed to attach quizSubmissions listener:', e);
+    return () => {};
+  }
+}
+
+/**
+ * Saves or updates a periodic test schedule in Firebase Firestore.
+ */
+export async function savePeriodicTestToCloud(schedule: PeriodicTestSchedule): Promise<void> {
+  try {
+    const docId = toSafeFirestoreId(schedule.id);
+    const payload = sanitizeForFirestore({
+      ...schedule,
+      id: docId,
+    });
+    const docRef = doc(db, COLLECTIONS.PERIODIC_TESTS, docId);
+    await setDoc(docRef, payload, { merge: true });
+  } catch (err: any) {
+    console.error('[Firebase] Failed to save periodic test schedule:', err?.message || err);
+    throw new Error(`定期テスト日程のクラウド保存エラー: ${err?.message || err}`);
+  }
+}
+
+/**
+ * Deletes a periodic test schedule from Firebase Firestore.
+ */
+export async function deletePeriodicTestFromCloud(testId: string): Promise<void> {
+  try {
+    const docRef = doc(db, COLLECTIONS.PERIODIC_TESTS, toSafeFirestoreId(testId));
+    await deleteDoc(docRef);
+  } catch (err: any) {
+    console.error('[Firebase] Failed to delete periodic test schedule:', err?.message || err);
+    throw new Error(`定期テスト日程の削除エラー: ${err?.message || err}`);
+  }
+}
+
+/**
+ * Fetches all periodic test schedules from Firebase Firestore once.
+ */
+export async function fetchPeriodicTestsFromCloud(): Promise<PeriodicTestSchedule[]> {
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.PERIODIC_TESTS));
+    const list: PeriodicTestSchedule[] = [];
+    snap.forEach((d) => {
+      const item = d.data() as PeriodicTestSchedule;
+      if (item && item.title && item.date) {
+        list.push({
+          ...item,
+          id: item.id || d.id,
+        });
+      }
+    });
+    list.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    return list;
+  } catch (err: any) {
+    console.error('[Firebase] Error fetching periodic tests:', err?.message || err);
+    return [];
+  }
+}
+
+/**
+ * Subscribes to real-time updates for periodic test schedules.
+ */
+export function subscribeToPeriodicTests(
+  onUpdate: (schedules: PeriodicTestSchedule[]) => void
+): () => void {
+  try {
+    const colRef = collection(db, COLLECTIONS.PERIODIC_TESTS);
+    return onSnapshot(
+      colRef,
+      (snapshot) => {
+        const list: PeriodicTestSchedule[] = [];
+        snapshot.forEach((d) => {
+          const item = d.data() as PeriodicTestSchedule;
+          if (item && item.title && item.date) {
+            list.push({
+              ...item,
+              id: item.id || d.id,
+            });
+          }
+        });
+        list.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+        onUpdate(list);
+      },
+      (error) => {
+        console.error('Firestore periodicTests subscription error:', error);
+      }
+    );
+  } catch (e: any) {
+    console.error('Failed to attach periodicTests listener:', e);
+    return () => {};
+  }
+}
+
+/**
+ * Saves or updates a class forum post in Firebase Firestore.
+ */
+export async function savePostToCloud(post: ForumPost): Promise<void> {
+  try {
+    const docId = toSafeFirestoreId(post.id);
+    const payload = sanitizeForFirestore({
+      ...post,
+      id: docId,
+    });
+    const docRef = doc(db, COLLECTIONS.POSTS, docId);
+    await setDoc(docRef, payload, { merge: true });
+  } catch (err: any) {
+    console.error('[Firebase] Failed to save forum post:', err?.message || err);
+  }
+}
+
+/**
+ * Fetches all class forum posts from Firebase Firestore once.
+ */
+export async function fetchPostsFromCloud(): Promise<ForumPost[]> {
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.POSTS));
+    const list: ForumPost[] = [];
+    snap.forEach((d) => {
+      const item = d.data() as ForumPost;
+      if (item && item.id && item.title) {
+        list.push(item);
+      }
+    });
+    list.sort((a, b) => (b.createdAtMs || Date.parse(b.createdAt) || 0) - (a.createdAtMs || Date.parse(a.createdAt) || 0));
+    return list;
+  } catch (err: any) {
+    console.error('[Firebase] Error fetching forum posts:', err?.message || err);
+    return [];
+  }
+}
+
+/**
+ * Subscribes to real-time updates for class forum posts across all devices.
+ */
+export function subscribeToPosts(
+  onUpdate: (posts: ForumPost[]) => void
+): () => void {
+  try {
+    const colRef = collection(db, COLLECTIONS.POSTS);
+    return onSnapshot(
+      colRef,
+      (snapshot) => {
+        const list: ForumPost[] = [];
+        snapshot.forEach((d) => {
+          const item = d.data() as ForumPost;
+          if (item && item.id && item.title) {
+            list.push(item);
+          }
+        });
+        list.sort((a, b) => (b.createdAtMs || Date.parse(b.createdAt) || 0) - (a.createdAtMs || Date.parse(a.createdAt) || 0));
+        onUpdate(list);
+      },
+      (error) => {
+        console.error('Firestore posts subscription error:', error);
+      }
+    );
+  } catch (e: any) {
+    console.error('Failed to attach posts listener:', e);
+    return () => {};
+  }
+}
+
 
 

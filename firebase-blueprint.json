@@ -66,6 +66,18 @@
         "comments": { "type": "array" }
       },
       "required": ["id", "authorNickname", "title", "content"]
+    },
+    "PeriodicTestSchedule": {
+      "title": "PeriodicTestSchedule",
+      "description": "Registered periodic test names and exam dates",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string", "maxLength": 128 },
+        "date": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "string", "maxLength": 32 }
+      },
+      "required": ["id", "title", "date"]
     }
   },
   "firestore": {
@@ -84,6 +96,10 @@
     "/posts/{postId}": {
       "schema": "ForumPost",
       "description": "Class forum posts"
+    },
+    "/periodicTests/{testId}": {
+      "schema": "PeriodicTestSchedule",
+      "description": "Periodic test schedule dates for countdown"
     }
   }
 }

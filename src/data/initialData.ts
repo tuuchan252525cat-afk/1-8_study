@@ -23,11 +23,11 @@ export const INITIAL_TEST_RECORDS: TestRecord[] = [];
 export const INITIAL_QUIZZES: WeeklyQuiz[] = [
   {
     id: 'quiz-eng-w4',
-    title: '第4週 英単語ターゲット 500演習',
+    title: 'LEAP テスト',
     category: 'english',
     weekLabel: '今週の小テスト',
     durationMinutes: 5,
-    description: '大学入試頻出ターゲット単語から最重要の5語を厳選。語法と文脈の判断力を確認しよう！',
+    description: '大学入試頻出英単語から最重要語彙・熟語を厳選。語法と文脈の判断力を確認しよう！',
     questions: [
       {
         id: 'q-eng-1',

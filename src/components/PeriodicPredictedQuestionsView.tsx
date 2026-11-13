@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { WeeklyQuiz, QuizQuestion, AiAnalysisResult, MaterialSubject, StudentPrediction } from '../types';
 import { isStaticDeployment } from '../utils/navigation';
+import { getLastSeenAt, markSectionSeen, isItemUnseenNew, countUnseenNew } from '../utils/newBadge';
+import { FullscreenMaterialModal } from './FullscreenMaterialModal';
 import {
   Sparkles,
   BookOpen,
@@ -26,10 +28,8 @@ import {
   X,
   Printer,
   Maximize2,
-  Minimize2,
   Download,
   Trash2,
-  ExternalLink,
   AlertTriangle,
   RefreshCw,
   AlertCircle,
@@ -37,6 +37,9 @@ import {
   Search,
   ArrowUpDown,
   Eye,
+  ZoomIn,
+  Trophy,
+  Target,
 } from 'lucide-react';
 
 export const PeriodicPredictedQuestionsView: React.FC = () => {
@@ -86,6 +89,32 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [showExplanationList, setShowExplanationList] = useState(false);
   const [showRankings, setShowRankings] = useState(false);
+  const [isReviewMode, setIsReviewMode] = useState(false);
+  const [reviewQuestions, setReviewQuestions] = useState<QuizQuestion[]>([]);
+  const [lastQuizResult, setLastQuizResult] = useState<{
+    score: number;
+    bestScore: number;
+    attemptCount: number;
+    maxScore: number;
+    rank: number;
+    total: number;
+  } | null>(null);
+  const [reviewQuizResult, setReviewQuizResult] = useState<{ score: number; maxScore: number } | null>(null);
+
+  // Track last seen for Student Predictions NEW badges
+  const predLastSeenRef = useRef<number>(getLastSeenAt('student_predictions'));
+  const [unseenPredCount, setUnseenPredCount] = useState<number>(() =>
+    countUnseenNew(studentPredictions, 'student_predictions')
+  );
+
+  useEffect(() => {
+    if (activeSegment === 'student_predictions') {
+      markSectionSeen('student_predictions');
+      setUnseenPredCount(0);
+    } else {
+      setUnseenPredCount(countUnseenNew(studentPredictions, 'student_predictions'));
+    }
+  }, [activeSegment, studentPredictions]);
 
   // ==========================================
   // Student Predictions Local States
@@ -143,6 +172,10 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
   });
 
   const activeQuiz = quizzes.find((q) => q.id === activeQuizId);
+  const activeQuestions =
+    isReviewMode && reviewQuestions.length > 0
+      ? reviewQuestions
+      : activeQuiz?.questions || [];
 
   // Student Predictions filtering
   const filteredStudentPredictions = useMemo(() => {
@@ -461,6 +494,23 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
   // Interactive Quiz Runner Handlers
   const startQuiz = (quizId: string) => {
     setActiveQuizId(quizId);
+    setIsReviewMode(false);
+    setReviewQuestions([]);
+    setReviewQuizResult(null);
+    setLastQuizResult(null);
+    setIsPlaying(true);
+    setCurrentQIndex(0);
+    setSelectedAnswers([]);
+    setIsSubmitted(false);
+    setShowExplanationList(false);
+    setShowRankings(false);
+  };
+
+  const startMissedReview = (missed: QuizQuestion[]) => {
+    if (missed.length === 0) return;
+    setReviewQuestions(missed);
+    setIsReviewMode(true);
+    setReviewQuizResult(null);
     setIsPlaying(true);
     setCurrentQIndex(0);
     setSelectedAnswers([]);
@@ -476,17 +526,31 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
   };
 
   const handleNextOrSubmit = () => {
-    if (!activeQuiz) return;
-    if (currentQIndex < activeQuiz.questions.length - 1) {
+    if (!activeQuiz || activeQuestions.length === 0) return;
+    if (currentQIndex < activeQuestions.length - 1) {
       setCurrentQIndex((prev) => prev + 1);
+    } else if (isReviewMode) {
+      let correctCount = 0;
+      activeQuestions.forEach((q, idx) => {
+        if (selectedAnswers[idx] === q.correctIndex) {
+          correctCount += 1;
+        }
+      });
+      setReviewQuizResult({ score: correctCount, maxScore: activeQuestions.length });
+      setIsSubmitted(true);
     } else {
-      submitQuiz(activeQuiz.id, selectedAnswers);
+      const res = submitQuiz(activeQuiz.id, selectedAnswers);
+      setLastQuizResult(res);
       setIsSubmitted(true);
     }
   };
 
   const backToList = () => {
     setIsPlaying(false);
+    setIsReviewMode(false);
+    setReviewQuestions([]);
+    setReviewQuizResult(null);
+    setLastQuizResult(null);
     setActiveQuizId(null);
     setIsSubmitted(false);
     setShowExplanationList(false);
@@ -566,20 +630,17 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
-            {!isMobileModal && (
-              <button
-                onClick={() => setIsFullscreenPreview(!isFullscreenPreview)}
-                className="p-2 rounded-2xl bg-stone-100 hover:bg-stone-200 text-slate-700 transition-all cursor-pointer border border-stone-200"
-                title={isFullscreenPreview ? '全画面表示を解除' : '全画面で拡大表示'}
-              >
-                {isFullscreenPreview ? (
-                  <Minimize2 className="w-4 h-4" />
-                ) : (
-                  <Maximize2 className="w-4 h-4" />
-                )}
-              </button>
-            )}
             <button
+              type="button"
+              onClick={() => setIsFullscreenPreview(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black transition-all cursor-pointer shadow-2xs"
+              title="全画面で拡大表示"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+              <span>{isMobileModal ? '拡大（全画面）' : '全画面で拡大'}</span>
+            </button>
+            <button
+              type="button"
               onClick={() => window.print()}
               className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-stone-100 hover:bg-stone-200 text-slate-700 text-xs font-black transition-all cursor-pointer border border-stone-200"
             >
@@ -588,6 +649,7 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
             </button>
             {isAuthor && (
               <button
+                type="button"
                 onClick={() =>
                   handleDeletePred(selectedPrediction.id, selectedPrediction.authorStudentNumber)
                 }
@@ -631,26 +693,25 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
                       <Download className="w-3.5 h-3.5" />
                       <span>保存</span>
                     </a>
-                    <a
-                      href={activePredPdfSource}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#1c603a] hover:bg-[#154a2c] text-white font-bold text-xs shadow-2xs"
+                    <button
+                      type="button"
+                      onClick={() => setIsFullscreenPreview(true)}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#1c603a] hover:bg-[#154a2c] text-white font-bold text-xs shadow-2xs cursor-pointer"
                     >
-                      <ExternalLink className="w-3.5 h-3.5" />
+                      <Maximize2 className="w-3.5 h-3.5" />
                       <span>全画面で開く</span>
-                    </a>
+                    </button>
                   </div>
                 </div>
 
                 <div
-                  className={`border border-stone-200 rounded-3xl overflow-hidden shadow-xs bg-stone-50 ${
+                  className={`border border-stone-200 rounded-3xl overflow-auto pinch-zoom-surface shadow-xs bg-stone-50 ${
                     isMobileModal ? 'h-[420px]' : 'h-[550px] sm:h-[650px]'
                   }`}
                 >
                   <iframe
                     src={activePredPdfSource}
-                    className="w-full h-full border-0"
+                    className="w-full h-full border-0 touch-auto"
                     title={selectedPrediction.title}
                   />
                 </div>
@@ -676,13 +737,31 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
                 </div>
               </div>
             ) : selectedPrediction.imageUrl ? (
-              <div className="border border-stone-200 rounded-3xl overflow-hidden bg-slate-900 shadow-inner p-2 sm:p-4 text-center min-h-[300px] flex items-center justify-center">
-                <img
-                  src={selectedPrediction.imageUrl}
-                  alt={selectedPrediction.title}
-                  onError={() => setImgError(true)}
-                  className="max-h-[580px] w-auto max-w-full mx-auto object-contain rounded-2xl shadow-md bg-white"
-                />
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2 text-[11px] font-bold text-stone-500 px-1">
+                  <span className="inline-flex items-center gap-1 text-[#1c603a]">
+                    <ZoomIn className="w-3.5 h-3.5" />
+                    <span>スマホでは指2本（ピンチアウト）で拡大・移動できます</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsFullscreenPreview(true)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-[#1c603a] font-black shrink-0 cursor-pointer"
+                  >
+                    <Maximize2 className="w-3 h-3" />
+                    <span>全画面で拡大</span>
+                  </button>
+                </div>
+                <div className="border border-stone-200 rounded-3xl overflow-auto pinch-zoom-surface bg-slate-900 shadow-inner p-2 sm:p-4 text-center min-h-[300px] flex items-center justify-center">
+                  <img
+                    src={selectedPrediction.imageUrl}
+                    alt={selectedPrediction.title}
+                    onClick={() => setIsFullscreenPreview(true)}
+                    onError={() => setImgError(true)}
+                    title="タップまたはクリックで全画面表示"
+                    className="max-h-[580px] w-auto max-w-full mx-auto object-contain rounded-2xl shadow-md bg-white touch-auto cursor-zoom-in"
+                  />
+                </div>
               </div>
             ) : (
               <div className="p-12 text-center bg-[#fdfbf7] rounded-3xl border border-stone-200 space-y-2">
@@ -794,12 +873,17 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
 
           <button
             onClick={() => setActiveSegment('student_predictions')}
-            className={`p-4 sm:p-5 rounded-2xl border-2 transition-all cursor-pointer text-center ${
+            className={`p-4 sm:p-5 rounded-2xl border-2 transition-all cursor-pointer text-center relative ${
               activeSegment === 'student_predictions'
                 ? 'border-[#1c603a] bg-white ring-2 ring-[#1c603a]/20 shadow-xs'
                 : 'border-stone-300/80 bg-white hover:bg-stone-50'
             }`}
           >
+            {unseenPredCount > 0 && activeSegment !== 'student_predictions' && (
+              <span className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black shadow-2xs">
+                NEW {unseenPredCount}
+              </span>
+            )}
             <div className="text-xs font-black text-[#1c603a] uppercase tracking-wider flex items-center justify-center gap-1">
               <BookOpen className="w-3.5 h-3.5 text-[#1c603a]" />
               <span>STUDENT PREDICTIONS</span>
@@ -838,22 +922,30 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
               {!isSubmitted ? (
                 <div className="space-y-6">
                   {/* Progress Indicator */}
-                  <div className="flex items-center justify-between text-xs font-black text-stone-500">
-                    <span>
-                      問題 {currentQIndex + 1} / {activeQuiz.questions.length}
-                    </span>
+                  <div className="flex items-center justify-between text-xs font-black text-stone-500 flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      {isReviewMode && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-black">
+                          <Target className="w-3 h-3" />
+                          <span>間違えた問題 復習モード</span>
+                        </span>
+                      )}
+                      <span>
+                        問題 {currentQIndex + 1} / {activeQuestions.length}
+                      </span>
+                    </div>
                     <span>選択中: {selectedAnswers[currentQIndex] !== undefined ? '回答完了' : '未選択'}</span>
                   </div>
 
                   {/* Question Body */}
                   <div className="bg-[#fdfbf7] p-5 sm:p-6 rounded-2xl border border-stone-200 space-y-4">
                     <h3 className="text-sm sm:text-base font-black text-slate-900 leading-relaxed">
-                      {activeQuiz.questions[currentQIndex]?.question}
+                      {activeQuestions[currentQIndex]?.question}
                     </h3>
 
                     {/* Options */}
                     <div className="space-y-2.5">
-                      {activeQuiz.questions[currentQIndex]?.options.map((opt, idx) => (
+                      {activeQuestions[currentQIndex]?.options.map((opt, idx) => (
                         <button
                           key={idx}
                           onClick={() => handleSelectOption(idx)}
@@ -893,40 +985,153 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
                       disabled={selectedAnswers[currentQIndex] === undefined}
                       className="px-6 py-2.5 rounded-xl bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black shadow-xs cursor-pointer disabled:opacity-40"
                     >
-                      {currentQIndex === activeQuiz.questions.length - 1 ? '採点する' : '次の問題へ'}
+                      {currentQIndex === activeQuestions.length - 1 ? '採点する' : '次の問題へ'}
                     </button>
                   </div>
                 </div>
-              ) : (
-                /* Quiz Submitted Results View */
-                <div className="space-y-6 text-center animate-fadeIn">
-                  <div className="p-6 bg-[#f4f8f5] rounded-3xl border border-[#1c603a]/30 space-y-2 max-w-md mx-auto">
-                    <Award className="w-12 h-12 text-[#1c603a] mx-auto" />
-                    <h3 className="text-xl font-black text-slate-900">採点結果</h3>
-                    <div className="text-3xl font-black text-[#1c603a]">
-                      {getMyQuizStanding(activeQuiz.id)?.myScore} / {activeQuiz.questions.length}点
-                    </div>
-                    <p className="text-xs text-stone-500 font-bold">
-                      解答が完了しました！マイページにも記録が反映されています。
-                    </p>
-                  </div>
+              ) : (() => {
+                const missed = activeQuestions.filter(
+                  (q, idx) => selectedAnswers[idx] !== q.correctIndex
+                );
+                const scoreCount = isReviewMode
+                  ? reviewQuizResult?.score ?? 0
+                  : lastQuizResult?.score ?? (getMyQuizStanding(activeQuiz.id)?.myScore || 0);
+                const maxCount = activeQuestions.length;
+                const accuracy = maxCount > 0 ? Math.round((scoreCount / maxCount) * 100) : 0;
+                const isPerfect = maxCount > 0 && scoreCount === maxCount;
 
-                  <div className="flex flex-wrap justify-center gap-3">
-                    <button
-                      onClick={startQuiz.bind(null, activeQuiz.id)}
-                      className="px-5 py-2.5 rounded-2xl bg-[#1c603a] text-white text-xs font-black shadow-xs hover:bg-[#154a2c] cursor-pointer"
-                    >
-                      もう一度挑戦する
-                    </button>
-                    <button
-                      onClick={backToList}
-                      className="px-5 py-2.5 rounded-2xl bg-stone-100 text-slate-700 text-xs font-black hover:bg-stone-200 cursor-pointer border border-stone-200"
-                    >
-                      予想問題一覧に戻る
-                    </button>
+                return (
+                  <div className="space-y-6 animate-fadeIn">
+                    <div className="bg-[#F5F4EE] rounded-3xl p-5 sm:p-6 border border-stone-200/80 space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-center gap-4">
+                          <div
+                            className={`w-14 h-14 rounded-2xl border flex items-center justify-center shrink-0 ${
+                              isPerfect
+                                ? 'bg-amber-50 border-amber-300 text-amber-500'
+                                : 'bg-emerald-50 border-emerald-200 text-[#1c603a]'
+                            }`}
+                          >
+                            <Trophy className="w-7 h-7" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[11px] font-black text-[#1c603a]">
+                                {isReviewMode ? '◎ 復習モード完了' : '◎ 採点完了 · クラウド保存済'}
+                              </span>
+                              {isPerfect && (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 border border-amber-300 text-amber-800 text-[11px] font-black">
+                                  <Award className="w-3.5 h-3.5" />
+                                  <span>パーフェクト！</span>
+                                </span>
+                              )}
+                            </div>
+                            <h3 className="text-lg font-black text-slate-900 mt-0.5">
+                              {isPerfect
+                                ? '全問正解！パーフェクト達成です！'
+                                : '採点結果と復習ポイント'}
+                            </h3>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2.5">
+                          <div className="bg-white rounded-2xl px-4 py-2.5 border border-stone-200 text-center">
+                            <span className="text-[10px] font-bold text-stone-400 block">正答数</span>
+                            <span className="text-lg font-black text-slate-900 tabular-nums">
+                              {scoreCount}/{maxCount}
+                            </span>
+                          </div>
+                          <div className="bg-white rounded-2xl px-4 py-2.5 border border-stone-200 text-center">
+                            <span className="text-[10px] font-bold text-stone-400 block">正答率</span>
+                            <span className="text-lg font-black text-[#1c603a] tabular-nums">
+                              {accuracy}%
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {missed.length > 0 ? (
+                        <button
+                          onClick={() => startMissedReview(missed)}
+                          className="w-full bg-white hover:bg-amber-50/70 p-4 rounded-2xl border-2 border-amber-300 hover:border-amber-500 shadow-xs transition-all flex items-center justify-between gap-3 cursor-pointer text-left"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center shrink-0">
+                              <Target className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <div className="text-sm font-black text-slate-900">
+                                間違えた問題だけ復習する（全{missed.length}問）
+                              </div>
+                              <div className="text-[11px] font-semibold text-stone-500">
+                                不正解だった問題だけを集中的に解き直せます
+                              </div>
+                            </div>
+                          </div>
+                          <ChevronRight className="w-5 h-5 text-amber-600 shrink-0" />
+                        </button>
+                      ) : (
+                        <div className="bg-white p-3.5 rounded-2xl border border-emerald-200 flex items-center gap-3">
+                          <Trophy className="w-5 h-5 text-amber-500 shrink-0" />
+                          <span className="text-xs font-black text-[#1c603a]">
+                            パーフェクト！すべての問題に正解しました。記録はマイページにも保存されています。
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap justify-center gap-3">
+                      <button
+                        onClick={() => startQuiz(activeQuiz.id)}
+                        className="px-5 py-2.5 rounded-2xl bg-[#1c603a] text-white text-xs font-black shadow-xs hover:bg-[#154a2c] cursor-pointer"
+                      >
+                        {isReviewMode ? '全問テストに再挑戦' : 'もう一度挑戦する'}
+                      </button>
+                      <button
+                        onClick={backToList}
+                        className="px-5 py-2.5 rounded-2xl bg-stone-100 text-slate-700 text-xs font-black hover:bg-stone-200 cursor-pointer border border-stone-200"
+                      >
+                        予想問題一覧に戻る
+                      </button>
+                    </div>
+
+                    <div className="space-y-3 text-left pt-2">
+                      {activeQuestions.map((q, idx) => {
+                        const userAns = selectedAnswers[idx];
+                        const isCorrect = userAns === q.correctIndex;
+                        return (
+                          <div
+                            key={q.id}
+                            className={`p-4 rounded-2xl border text-xs space-y-1.5 ${
+                              isCorrect
+                                ? 'bg-[#f4f8f5] border-[#1c603a]/40'
+                                : 'bg-rose-50/60 border-rose-200'
+                            }`}
+                          >
+                            <div className="font-black text-slate-900 flex items-center justify-between gap-2">
+                              <span>
+                                問{idx + 1}: {q.question}
+                              </span>
+                              <span className={isCorrect ? 'text-[#1c603a]' : 'text-rose-700'}>
+                                {isCorrect ? '◎ 正解' : '× 不正解'}
+                              </span>
+                            </div>
+                            {!isCorrect && (
+                              <div className="font-bold text-[#1c603a]">
+                                正解: {q.options[q.correctIndex]}
+                              </div>
+                            )}
+                            <div className="p-2.5 bg-white rounded-xl border border-stone-200 text-stone-700 font-medium">
+                              <span className="font-black text-slate-900">解説: </span>
+                              {q.explanation}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
           ) : (
             /* AI Quizzes List & AI Generator Header */
@@ -1295,10 +1500,15 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
                           </div>
 
                           <div className="flex-1 min-w-0">
-                            <div className="text-[11px] font-black text-stone-400 uppercase tracking-tight flex items-center gap-1.5">
+                            <div className="text-[11px] font-black text-stone-400 uppercase tracking-tight flex items-center gap-1.5 flex-wrap">
                               <span>{pred.fileType.toUpperCase()}</span>
                               <span aria-hidden="true">·</span>
                               <span>{pred.fileSize}</span>
+                              {isItemUnseenNew(pred, predLastSeenRef.current) && (
+                                <span className="px-1.5 py-0.5 rounded-md bg-rose-500 text-white text-[9px] font-black tracking-normal">
+                                  NEW
+                                </span>
+                              )}
                             </div>
 
                             <h3 className="text-sm font-black leading-snug my-0.5 text-slate-900 truncate group-hover:text-[#1c603a] transition-colors">
@@ -1324,13 +1534,7 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
 
               {/* Right Column: Desktop Permanent Preview (LG ONLY) */}
               <div className="hidden lg:block lg:col-span-8">
-                <div
-                  className={`transition-all ${
-                    isFullscreenPreview
-                      ? 'fixed inset-4 z-50 bg-white rounded-3xl p-6 sm:p-8 shadow-2xl border border-stone-400 overflow-y-auto max-w-5xl mx-auto'
-                      : 'bg-white rounded-3xl p-5 sm:p-7 border border-stone-200/90 shadow-xs'
-                  }`}
-                >
+                <div className="bg-white rounded-3xl p-5 sm:p-7 border border-stone-200/90 shadow-xs transition-all">
                   {selectedPrediction ? (
                     renderPredPreviewContent(false)
                   ) : (
@@ -1371,7 +1575,7 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
               </button>
             </div>
 
-            <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-4">
+            <div className="p-4 sm:p-6 overflow-auto pinch-zoom-surface flex-1 space-y-4">
               {renderPredPreviewContent(true)}
 
               <div className="pt-4 pb-2 border-t border-stone-100">
@@ -1551,6 +1755,12 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
           </div>
         </div>
       )}
+      {/* In-App Fullscreen Student Prediction Modal */}
+      <FullscreenMaterialModal
+        isOpen={isFullscreenPreview}
+        onClose={() => setIsFullscreenPreview(false)}
+        material={selectedPrediction}
+      />
     </div>
   );
 };

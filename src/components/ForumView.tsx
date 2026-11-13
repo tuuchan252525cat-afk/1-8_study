@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
+import { getLastSeenAt, markSectionSeen, isItemUnseenNew } from '../utils/newBadge';
 import {
   MessageSquare,
   ThumbsUp,
@@ -13,6 +14,11 @@ import {
 
 export const ForumView: React.FC = () => {
   const { posts, addPost, addComment, toggleReaction, allSubjects, students } = useApp();
+
+  const initialLastSeenRef = useRef<number>(getLastSeenAt('forum'));
+  useEffect(() => {
+    markSectionSeen('forum');
+  }, [posts.length]);
 
   const [activeTag, setActiveTag] = useState<string>('すべて');
   const [isNewPostOpen, setIsNewPostOpen] = useState(false);
@@ -135,8 +141,8 @@ export const ForumView: React.FC = () => {
                 className="bg-white rounded-3xl p-5 sm:p-6 border border-stone-200/90 shadow-xs space-y-4"
               >
                 {/* Post Header (Modeled on 39204_0_b6de3a0e.jpg Card Info) */}
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-[11px] font-black text-stone-400 uppercase tracking-tight flex items-center gap-1.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="text-[11px] font-black text-stone-400 uppercase tracking-tight flex items-center gap-1.5 flex-wrap">
                     <span>{new Date(post.createdAt).toLocaleDateString('ja-JP')}</span>
                     <span aria-hidden="true">·</span>
                     <span>
@@ -145,6 +151,11 @@ export const ForumView: React.FC = () => {
                         students.find((s) => s.attendanceNumber === post.studentNumber)?.nickname) ||
                         post.authorNickname}
                     </span>
+                    {isItemUnseenNew(post, initialLastSeenRef.current) && (
+                      <span className="px-1.5 py-0.5 rounded-md bg-rose-500 text-white text-[9px] font-black tracking-normal">
+                        NEW
+                      </span>
+                    )}
                   </div>
                   <span className="text-[11px] font-black text-[#1c603a] bg-[#f4f8f5] px-2.5 py-0.5 rounded-full border border-[#1c603a]/20">
                     ◎ {post.subjectTag}

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { isStaticDeployment } from '../utils/navigation';
+import { countUnseenNew } from '../utils/newBadge';
 import {
   MapPin,
   Grid,
@@ -9,24 +10,70 @@ import {
   Bell,
   User,
   FolderDown,
-  MessageSquare,
   Edit3,
-  Search,
   X,
   Send,
-  HelpCircle,
   ChevronRight,
-  BookOpen,
+  CalendarClock,
 } from 'lucide-react';
 
 export const PortalHomeView: React.FC = () => {
-  const { setCurrentTab, currentStudent } = useApp();
+  const {
+    setCurrentTab,
+    setEditSectionHint,
+    currentStudent,
+    periodicTests,
+    testRecords,
+    materials,
+    studentPredictions,
+    posts,
+  } = useApp();
 
   // AI Q&A Modal State
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [aiQuestion, setAiQuestion] = useState('');
   const [aiAnswer, setAiAnswer] = useState<string | null>(null);
   const [isAskingAi, setIsAskingAi] = useState(false);
+
+  // Compute nearest upcoming periodic test from periodicTests (and fallback to testRecords dates)
+  const nextExamInfo = useMemo(() => {
+    const now = new Date();
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const scheduleMap = new Map<string, { title: string; date: string; diffDays: number }>();
+
+    const registerCandidate = (title: string, dateStr: string) => {
+      if (!title || !dateStr) return;
+      const match = dateStr.trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+      if (!match) return;
+      const y = Number(match[1]);
+      const m = Number(match[2]) - 1;
+      const d = Number(match[3]);
+      const targetMidnight = new Date(y, m, d).getTime();
+      const diffDays = Math.round((targetMidnight - todayMidnight) / (1000 * 60 * 60 * 24));
+      if (diffDays >= 0) {
+        scheduleMap.set(`${title}__${dateStr}`, { title, date: dateStr, diffDays });
+      }
+    };
+
+    testRecords.forEach((r) => registerCandidate(r.testTitle, r.testDate));
+    periodicTests.forEach((p) => registerCandidate(p.title, p.date));
+
+    const upcoming = Array.from(scheduleMap.values()).sort((a, b) => a.diffDays - b.diffDays);
+    return upcoming[0] || null;
+  }, [periodicTests, testRecords]);
+
+  // Dynamic NEW badges (within 48h & unseen on this device)
+  const newMaterialsCount = useMemo(() => countUnseenNew(materials, 'materials'), [materials]);
+  const newPredictionsCount = useMemo(
+    () => countUnseenNew(studentPredictions, 'student_predictions'),
+    [studentPredictions]
+  );
+  const newForumCount = useMemo(() => countUnseenNew(posts, 'forum'), [posts]);
+
+  const handleOpenPeriodicScheduleEdit = () => {
+    setEditSectionHint('periodic');
+    setCurrentTab('edit');
+  };
 
   const handleAskAiSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -83,7 +130,7 @@ export const PortalHomeView: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-8">
-      {/* 1. Green Header Banner (Modeled on まるごと祭 2026 header in 39203_0_78740368.jpg) */}
+      {/* 1. Green Header Banner */}
       <div className="relative bg-[#1c603a] text-white rounded-3xl overflow-hidden shadow-lg border border-[#185533]">
         <div className="px-6 pt-8 pb-10 text-center relative z-10">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/10 text-emerald-100 text-xs font-bold mb-3 backdrop-blur-xs">
@@ -121,9 +168,86 @@ export const PortalHomeView: React.FC = () => {
         </div>
       </div>
 
-      {/* 2. Main Icon-Centered Grid (Modeled on 39203_0_78740368.jpg) */}
+      {/* 2. Main Icon-Centered Grid */}
       <div className="bg-[#f0ece1] p-4 sm:p-6 rounded-3xl space-y-4 border border-stone-200/80 shadow-xs">
-        {/* Row 1: 2-Column Cards (成績・順位 & 定期テスト) */}
+        {/* Compact Periodic Test Countdown Card */}
+        <button
+          type="button"
+          onClick={handleOpenPeriodicScheduleEdit}
+          className="w-full bg-white hover:bg-stone-50 p-4 sm:p-5 rounded-3xl border border-stone-200/80 shadow-sm transition-all duration-200 flex items-center justify-between gap-3.5 text-left group cursor-pointer hover:border-[#1c603a] hover:shadow-md"
+        >
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div
+              className={`w-12 h-12 rounded-2xl border flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform ${
+                nextExamInfo && nextExamInfo.diffDays <= 7
+                  ? 'bg-rose-50 border-rose-200 text-rose-600'
+                  : 'bg-sky-50 border-sky-200 text-sky-600'
+              }`}
+            >
+              <CalendarClock className="w-6 h-6" />
+            </div>
+
+            <div className="min-w-0">
+              {nextExamInfo ? (
+                <>
+                  <div className="text-[11px] font-bold text-slate-400">
+                    実施予定日: {nextExamInfo.date.replace(/-/g, '/')}
+                  </div>
+                  <div className="text-sm sm:text-base font-black text-slate-900 truncate">
+                    {nextExamInfo.diffDays === 0
+                      ? `今日は「${nextExamInfo.title}」本番です！`
+                      : `次の定期テスト（${nextExamInfo.title}）まで`}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-[11px] font-bold text-slate-400">
+                    テストカウントダウン
+                  </div>
+                  <div className="text-sm sm:text-base font-black text-slate-900">
+                    次の定期テスト日程は未登録です
+                  </div>
+                  <div className="text-xs font-semibold text-slate-500">
+                    タップして「定期テスト日程一覧」から予定日を登録できます
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="shrink-0 flex items-center gap-2">
+            {nextExamInfo ? (
+              <div
+                className={`px-3.5 py-2 rounded-2xl border text-center tabular-nums ${
+                  nextExamInfo.diffDays === 0
+                    ? 'bg-rose-600 border-rose-600 text-white'
+                    : nextExamInfo.diffDays <= 7
+                    ? 'bg-amber-50 border-amber-200 text-amber-800'
+                    : 'bg-emerald-50 border-emerald-200 text-[#1c603a]'
+                }`}
+              >
+                {nextExamInfo.diffDays === 0 ? (
+                  <span className="text-xs sm:text-sm font-black">当日！</span>
+                ) : (
+                  <div className="flex items-baseline gap-0.5">
+                    <span className="text-[11px] font-black">あと</span>
+                    <span className="text-xl sm:text-2xl font-black leading-none">
+                      {nextExamInfo.diffDays}
+                    </span>
+                    <span className="text-xs font-black">日</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <span className="px-3 py-1.5 rounded-xl bg-stone-100 group-hover:bg-[#1c603a] text-slate-700 group-hover:text-white text-xs font-black transition-colors whitespace-nowrap">
+                日程を登録
+              </span>
+            )}
+            <ChevronRight className="w-4 h-4 text-stone-300 group-hover:text-slate-700 transition-colors hidden sm:block" />
+          </div>
+        </button>
+
+        {/* Row 1: 2-Column Cards (成績・順位 & 小テスト) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {/* Card A: 成績・順位 */}
           <button
@@ -170,15 +294,17 @@ export const PortalHomeView: React.FC = () => {
             <FileCheck2 className="w-7 h-7" />
           </div>
 
-          <h2 className="text-2xl font-black text-slate-900 group-hover:text-sky-700 transition-colors mb-1 flex items-center gap-2">
+          <h2 className="text-2xl font-black text-slate-900 group-hover:text-sky-700 transition-colors mb-1 flex items-center justify-center gap-2 flex-wrap">
             <span>定期テスト予想問題一覧</span>
-            <span className="px-2 py-0.5 rounded-md bg-sky-100 text-sky-700 text-xs font-extrabold">
-              NEW
-            </span>
+            {newPredictionsCount > 0 && (
+              <span className="px-2.5 py-0.5 rounded-full bg-rose-500 text-white text-xs font-black shadow-2xs">
+                NEW {newPredictionsCount}件
+              </span>
+            )}
           </h2>
 
           <p className="text-xs sm:text-sm font-semibold text-slate-600 mb-4">
-            各教科の出題傾向を分析した定期テスト予想問題の演習 ＆ 新規作成
+            各教科の出題傾向を分析した定期テスト予想問題の演習 ＆ 生徒作成予想問題
           </p>
 
           <div className="w-full border-b-2 border-dashed border-sky-300" />
@@ -207,13 +333,18 @@ export const PortalHomeView: React.FC = () => {
           {/* Card E: 教材共有 */}
           <button
             onClick={() => setCurrentTab('materials')}
-            className="bg-white hover:bg-stone-50 p-6 rounded-3xl border border-stone-200/80 shadow-sm transition-all duration-200 text-center flex flex-col items-center justify-center group cursor-pointer hover:border-amber-500 hover:shadow-md"
+            className="bg-white hover:bg-stone-50 p-6 rounded-3xl border border-stone-200/80 shadow-sm transition-all duration-200 text-center flex flex-col items-center justify-center group cursor-pointer hover:border-amber-500 hover:shadow-md relative"
           >
+            {newMaterialsCount > 0 && (
+              <span className="absolute top-3.5 right-3.5 px-2.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black shadow-2xs">
+                NEW {newMaterialsCount}
+              </span>
+            )}
             <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700 mb-3 group-hover:scale-110 transition-transform">
               <FolderDown className="w-6 h-6" />
             </div>
-            <h2 className="text-lg font-black text-slate-900 group-hover:text-amber-700 transition-colors mb-1">
-              教材共有
+            <h2 className="text-lg font-black text-slate-900 group-hover:text-amber-700 transition-colors mb-1 flex items-center gap-1.5">
+              <span>教材共有</span>
             </h2>
             <p className="text-xs font-semibold text-slate-500">
               問題用紙・実物プリント・プレビュー教材を共有する
@@ -223,8 +354,13 @@ export const PortalHomeView: React.FC = () => {
           {/* Card F: クラス掲示板 */}
           <button
             onClick={() => setCurrentTab('forum')}
-            className="bg-white hover:bg-stone-50 p-6 rounded-3xl border border-stone-200/80 shadow-sm transition-all duration-200 text-center flex flex-col items-center justify-center group cursor-pointer hover:border-slate-700 hover:shadow-md"
+            className="bg-white hover:bg-stone-50 p-6 rounded-3xl border border-stone-200/80 shadow-sm transition-all duration-200 text-center flex flex-col items-center justify-center group cursor-pointer hover:border-slate-700 hover:shadow-md relative"
           >
+            {newForumCount > 0 && (
+              <span className="absolute top-3.5 right-3.5 px-2.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black shadow-2xs">
+                NEW {newForumCount}
+              </span>
+            )}
             <div className="w-12 h-12 rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-800 mb-3 group-hover:scale-110 transition-transform">
               <Bell className="w-6 h-6" />
             </div>
@@ -267,7 +403,7 @@ export const PortalHomeView: React.FC = () => {
               設定・問題編集
             </h2>
             <p className="text-xs font-semibold text-slate-500">
-              テスト問題や登録教科情報を管理・編集する (/edit)
+              テスト問題や登録教科・日程情報を管理・編集する (/edit)
             </p>
           </button>
         </div>

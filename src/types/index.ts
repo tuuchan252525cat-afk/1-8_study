@@ -107,7 +107,7 @@ export interface AiAnalysisResult {
 export interface WeeklyQuiz {
   id: string;
   title: string;
-  category: 'english' | 'mizoblue' | 'ai_predicted';
+  category: 'english' | 'mizoblue' | 'ai_predicted' | (string & {});
   weekLabel: string;
   description: string;
   durationMinutes: number;
@@ -119,11 +119,22 @@ export interface WeeklyQuiz {
 export interface QuizResult {
   id: string;
   quizId: string;
+  quizTitle?: string;
+  category?: string;
   studentNumber: number;
   score: number;
+  bestScore?: number;
   maxScore: number;
+  attemptCount?: number;
   answers: number[];
   completedAt: string;
+}
+
+export interface PeriodicTestSchedule {
+  id: string;
+  title: string;
+  date: string; // YYYY-MM-DD
+  createdAt?: string;
 }
 
 export type AppTab =
@@ -158,6 +169,7 @@ export interface StudyMaterial {
   authorNickname: string;
   authorStudentNumber?: number;
   createdAt: string;
+  createdAtMs?: number;
   downloadCount: number;
   contentPreview?: string;
   imageUrl?: string;
@@ -183,6 +195,7 @@ export interface ForumPost {
   title: string;
   content: string;
   createdAt: string;
+  createdAtMs?: number;
   reactions: {
     like: number;
     heart: number;

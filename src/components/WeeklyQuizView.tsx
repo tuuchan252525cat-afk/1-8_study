@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { QuizQuestion } from '../types';
 import {
   BookOpen,
   CheckCircle2,
@@ -12,6 +13,9 @@ import {
   ChevronLeft,
   Filter,
   RotateCcw,
+  Trophy,
+  Target,
+  Award,
 } from 'lucide-react';
 
 export const WeeklyQuizView: React.FC = () => {
@@ -29,6 +33,8 @@ export const WeeklyQuizView: React.FC = () => {
   const [selectedAnswers, setSelectedAnswers] = useState<number[]>([]);
   const [lastResult, setLastResult] = useState<{
     score: number;
+    bestScore: number;
+    attemptCount: number;
     maxScore: number;
     rank: number;
     total: number;
@@ -36,10 +42,15 @@ export const WeeklyQuizView: React.FC = () => {
   const [showResultReview, setShowResultReview] = useState<boolean>(false);
   const [showClassStats, setShowClassStats] = useState<boolean>(false);
 
+  // Missed-questions-only review mode state
+  const [isReviewMode, setIsReviewMode] = useState<boolean>(false);
+  const [reviewQuestions, setReviewQuestions] = useState<QuizQuestion[]>([]);
+  const [reviewResult, setReviewResult] = useState<{ score: number; maxScore: number } | null>(null);
+
   // Filter quizzes by tab
   const tabQuizzes = quizzes.filter((q) => {
     if (activeTabType === 'weekly') {
-      return q.category === 'english' || q.category === 'mizoblue';
+      return q.category !== 'ai_predicted';
     } else {
       return q.category === 'ai_predicted';
     }
@@ -54,6 +65,10 @@ export const WeeklyQuizView: React.FC = () => {
   });
 
   const activeQuiz = quizzes.find((q) => q.id === selectedQuizId);
+  const activeQuestions =
+    isReviewMode && reviewQuestions.length > 0
+      ? reviewQuestions
+      : activeQuiz?.questions || [];
 
   const handleSelectOption = (optIndex: number) => {
     const updated = [...selectedAnswers];
@@ -62,11 +77,21 @@ export const WeeklyQuizView: React.FC = () => {
   };
 
   const handleNextOrFinish = () => {
-    if (!activeQuiz) return;
-    if (currentQIndex < activeQuiz.questions.length - 1) {
+    if (!activeQuiz || activeQuestions.length === 0) return;
+    if (currentQIndex < activeQuestions.length - 1) {
       setCurrentQIndex((prev) => prev + 1);
+    } else if (isReviewMode) {
+      let correctCount = 0;
+      activeQuestions.forEach((q, idx) => {
+        if (selectedAnswers[idx] === q.correctIndex) {
+          correctCount += 1;
+        }
+      });
+      setReviewResult({ score: correctCount, maxScore: activeQuestions.length });
+      setIsPlaying(false);
+      setShowResultReview(true);
     } else {
-      // Submit
+      // Submit full quiz to local + Firestore cloud
       const res = submitQuiz(activeQuiz.id, selectedAnswers);
       setLastResult(res);
       setIsPlaying(false);
@@ -76,6 +101,9 @@ export const WeeklyQuizView: React.FC = () => {
 
   const startQuiz = (quizId: string) => {
     setSelectedQuizId(quizId);
+    setIsReviewMode(false);
+    setReviewQuestions([]);
+    setReviewResult(null);
     setIsPlaying(true);
     setCurrentQIndex(0);
     setSelectedAnswers([]);
@@ -84,20 +112,46 @@ export const WeeklyQuizView: React.FC = () => {
     setShowClassStats(false);
   };
 
+  const startMissedReview = (missed: QuizQuestion[]) => {
+    if (missed.length === 0) return;
+    setReviewQuestions(missed);
+    setIsReviewMode(true);
+    setReviewResult(null);
+    setIsPlaying(true);
+    setCurrentQIndex(0);
+    setSelectedAnswers([]);
+    setShowResultReview(false);
+    setShowClassStats(false);
+  };
+
   const backToList = () => {
     setIsPlaying(false);
+    setIsReviewMode(false);
+    setReviewQuestions([]);
+    setReviewResult(null);
     setSelectedQuizId(null);
     setShowResultReview(false);
     setShowClassStats(false);
   };
 
+  const missedQuestions = activeQuestions.filter(
+    (q, idx) => selectedAnswers[idx] !== q.correctIndex
+  );
+  const currentScore = isReviewMode
+    ? reviewResult?.score ?? 0
+    : lastResult?.score ?? 0;
+  const currentMaxScore = activeQuestions.length;
+  const accuracyPercent =
+    currentMaxScore > 0 ? Math.round((currentScore / currentMaxScore) * 100) : 0;
+  const isPerfect = currentMaxScore > 0 && currentScore === currentMaxScore;
+
   return (
     <div className="space-y-4">
       {/* If playing a quiz */}
-      {isPlaying && activeQuiz ? (
+      {isPlaying && activeQuiz && activeQuestions[currentQIndex] ? (
         <div className="bg-white rounded-3xl p-5 sm:p-7 border border-stone-200/90 shadow-xs space-y-5">
           {/* Top Back & Step Header */}
-          <div className="flex items-center justify-between pb-3 border-b border-stone-100">
+          <div className="flex items-center justify-between gap-2 pb-3 border-b border-stone-100 flex-wrap">
             <button
               onClick={backToList}
               className="flex items-center gap-1 px-3.5 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-slate-800 text-xs font-black transition-all cursor-pointer"
@@ -106,9 +160,17 @@ export const WeeklyQuizView: React.FC = () => {
               <span>テスト一覧に戻る</span>
             </button>
 
-            <span className="text-xs font-black text-[#1c603a] bg-[#f4f8f5] px-3 py-1 rounded-full">
-              問 {currentQIndex + 1} / {activeQuiz.questions.length}
-            </span>
+            <div className="flex items-center gap-2">
+              {isReviewMode && (
+                <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-black">
+                  <Target className="w-3.5 h-3.5" />
+                  <span>間違えた問題 復習モード</span>
+                </span>
+              )}
+              <span className="text-xs font-black text-[#1c603a] bg-[#f4f8f5] px-3 py-1 rounded-full">
+                問 {currentQIndex + 1} / {activeQuestions.length}
+              </span>
+            </div>
           </div>
 
           {/* Progress Bar */}
@@ -116,7 +178,7 @@ export const WeeklyQuizView: React.FC = () => {
             <div
               className="bg-[#1c603a] h-full rounded-full transition-all duration-300"
               style={{
-                width: `${((currentQIndex + 1) / activeQuiz.questions.length) * 100}%`,
+                width: `${((currentQIndex + 1) / activeQuestions.length) * 100}%`,
               }}
             />
           </div>
@@ -124,16 +186,16 @@ export const WeeklyQuizView: React.FC = () => {
           {/* Question Text Box */}
           <div className="bg-[#fdfbf7] rounded-2xl p-5 sm:p-6 border border-stone-200 shadow-2xs">
             <div className="text-[11px] font-black text-stone-400 mb-1">
-              QUESTION {currentQIndex + 1}
+              {isReviewMode ? `REVIEW ${currentQIndex + 1}` : `QUESTION ${currentQIndex + 1}`}
             </div>
             <h3 className="text-base sm:text-lg font-black text-slate-900 leading-snug">
-              {activeQuiz.questions[currentQIndex].question}
+              {activeQuestions[currentQIndex].question}
             </h3>
           </div>
 
           {/* Choices as Large Button Cards */}
           <div className="space-y-3">
-            {activeQuiz.questions[currentQIndex].options.map((option, optIdx) => {
+            {activeQuestions[currentQIndex].options.map((option, optIdx) => {
               const isSelected = selectedAnswers[currentQIndex] === optIdx;
               const optionLetter = ['A', 'B', 'C', 'D'][optIdx] || `${optIdx + 1}`;
 
@@ -191,44 +253,136 @@ export const WeeklyQuizView: React.FC = () => {
               }`}
             >
               <span>
-                {currentQIndex === activeQuiz.questions.length - 1 ? '採点して結果を見る' : '次の問題へ'}
+                {currentQIndex === activeQuestions.length - 1 ? '採点して結果を見る' : '次の問題へ'}
               </span>
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
         </div>
       ) : showResultReview && activeQuiz ? (
-        /* Result Review Screen (Clean and button-heavy) */
+        /* Result Review Screen (Unified Pastel Icon Card + Missed-Questions Review CTA) */
         <div className="bg-white rounded-3xl p-5 sm:p-7 border border-stone-200/90 shadow-xs space-y-6">
-          {/* Result Score Banner */}
-          <div className="bg-[#1c603a] text-white rounded-3xl p-6 sm:p-7 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xs">
-            <div className="flex items-center gap-4 text-center sm:text-left">
-              <div className="w-16 h-16 rounded-2xl bg-amber-400 text-slate-900 flex items-center justify-center font-black text-2xl shrink-0 shadow-2xs">
-                {lastResult?.score ?? 0}
-                <span className="text-xs font-bold text-slate-700">/{activeQuiz.questions.length}</span>
+          {/* Score Card Banner */}
+          <div className="bg-[#F5F4EE] rounded-3xl p-5 sm:p-6 border border-stone-200/80 space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div
+                  className={`w-16 h-16 rounded-2xl border flex items-center justify-center shrink-0 shadow-2xs ${
+                    isPerfect
+                      ? 'bg-amber-50 border-amber-300 text-amber-500'
+                      : accuracyPercent >= 60
+                      ? 'bg-emerald-50 border-emerald-200 text-[#1c603a]'
+                      : 'bg-sky-50 border-sky-200 text-sky-600'
+                  }`}
+                >
+                  <Trophy className="w-8 h-8" />
+                </div>
+
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-black text-[#1c603a]">
+                      {isReviewMode ? '◎ 復習モード 採点完了' : '◎ 採点完了 · クラウド保存済'}
+                    </span>
+                    {isPerfect ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 border border-amber-300 text-amber-800 text-[11px] font-black">
+                        <Award className="w-3.5 h-3.5" />
+                        <span>パーフェクト！</span>
+                      </span>
+                    ) : accuracyPercent >= 60 ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 border border-emerald-200 text-emerald-800 text-[11px] font-black">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>合格ライン突破</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-100 border border-rose-200 text-rose-800 text-[11px] font-black">
+                        <Target className="w-3.5 h-3.5" />
+                        <span>復習チャレンジ</span>
+                      </span>
+                    )}
+                  </div>
+
+                  <h3 className="text-lg sm:text-xl font-black text-slate-900 mt-1">
+                    {isPerfect
+                      ? isReviewMode
+                        ? '復習パーフェクト！弱点を克服しました！'
+                        : '満点達成！パーフェクトです！'
+                      : accuracyPercent >= 60
+                      ? 'よく頑張りました！あと少しで満点です'
+                      : '間違えた問題をすぐ復習しよう！'}
+                  </h3>
+                </div>
               </div>
-              <div>
-                <div className="text-xs font-black text-amber-300">◎ 採点完了</div>
-                <h3 className="text-lg sm:text-xl font-black mt-0.5">
-                  {lastResult?.score === activeQuiz.questions.length
-                    ? '満点達成！完璧です！'
-                    : (lastResult?.score ?? 0) >= 3
-                    ? '合格ライン突破！よく頑張りました'
-                    : '復習チャンス！解説をチェックしよう'}
-                </h3>
+
+              {/* Numeric Stats Cards */}
+              <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
+                <div className="bg-white rounded-2xl px-4 py-3 border border-stone-200/80 shadow-2xs text-center min-w-[92px]">
+                  <span className="text-[10px] font-bold text-stone-400 block">正答数</span>
+                  <span className="text-xl font-black text-slate-900 tabular-nums">
+                    {currentScore}
+                    <span className="text-xs font-bold text-stone-500">/{currentMaxScore}</span>
+                  </span>
+                </div>
+
+                <div className="bg-white rounded-2xl px-4 py-3 border border-stone-200/80 shadow-2xs text-center min-w-[84px]">
+                  <span className="text-[10px] font-bold text-stone-400 block">正答率</span>
+                  <span className="text-xl font-black text-[#1c603a] tabular-nums">
+                    {accuracyPercent}%
+                  </span>
+                </div>
+
+                {!isReviewMode && lastResult && (
+                  <div className="bg-white rounded-2xl px-4 py-3 border border-stone-200/80 shadow-2xs flex items-center gap-2">
+                    <div>
+                      <span className="text-[10px] font-bold text-stone-400 block">クラス順位</span>
+                      <span className="text-base font-black text-slate-900 tabular-nums">
+                        {lastResult.rank}位
+                        <span className="text-[11px] font-bold text-stone-500 ml-0.5">
+                          /{lastResult.total}人
+                        </span>
+                      </span>
+                    </div>
+                    <ShieldCheck className="w-5 h-5 text-[#1c603a]" />
+                  </div>
+                )}
               </div>
             </div>
 
-            {lastResult && (
-              <div className="bg-white text-slate-900 rounded-2xl px-5 py-3 border border-stone-200 flex items-center gap-3 shrink-0 shadow-2xs">
-                <div>
-                  <span className="text-[10px] text-stone-400 block font-black">クラス順位</span>
-                  <span className="text-base font-black tabular-nums">
-                    {lastResult.rank}位{' '}
-                    <span className="text-xs font-bold text-stone-500">/ {lastResult.total}人中</span>
-                  </span>
+            {/* Missed Questions Review CTA or Perfect Achievement Banner */}
+            {missedQuestions.length > 0 ? (
+              <button
+                onClick={() => startMissedReview(missedQuestions)}
+                className="w-full bg-white hover:bg-amber-50/70 p-4 rounded-2xl border-2 border-amber-300 hover:border-amber-500 shadow-xs transition-all flex items-center justify-between gap-3 cursor-pointer group"
+              >
+                <div className="flex items-center gap-3.5 text-left">
+                  <div className="w-11 h-11 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                    <Target className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="text-sm sm:text-base font-black text-slate-900">
+                      間違えた問題だけ復習する（全{missedQuestions.length}問）
+                    </div>
+                    <div className="text-xs font-semibold text-stone-500">
+                      不正解だった問題だけをピックアップして即座に解き直せます
+                    </div>
+                  </div>
                 </div>
-                <ShieldCheck className="w-5 h-5 text-[#1c603a]" />
+                <ChevronRight className="w-5 h-5 text-amber-600 shrink-0" />
+              </button>
+            ) : (
+              <div className="bg-white p-4 rounded-2xl border border-emerald-200 flex items-center gap-3.5 shadow-2xs">
+                <div className="w-11 h-11 rounded-2xl bg-amber-50 border border-amber-200 text-amber-500 flex items-center justify-center shrink-0">
+                  <Trophy className="w-6 h-6" />
+                </div>
+                <div className="flex-1">
+                  <div className="text-sm font-black text-[#1c603a]">
+                    パーフェクト！全問正解達成
+                  </div>
+                  <div className="text-xs font-semibold text-stone-500">
+                    {isReviewMode
+                      ? '間違えた問題をすべて正解できました！本番テストでもう一度満点を狙いましょう。'
+                      : '素晴らしい成績です！記録はマイページの「小テスト成績」にも自動保存されました。'}
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -240,7 +394,7 @@ export const WeeklyQuizView: React.FC = () => {
               className="py-3 px-3 rounded-2xl bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <RotateCcw className="w-4 h-4" />
-              <span>もう一度挑戦</span>
+              <span>{isReviewMode ? '全問テストに再挑戦' : 'もう一度挑戦'}</span>
             </button>
 
             <button
@@ -252,11 +406,11 @@ export const WeeklyQuizView: React.FC = () => {
             </button>
 
             <button
-              onClick={() => setCurrentTab('ai_analyzer')}
+              onClick={() => setCurrentTab('mypage')}
               className="py-3 px-3 rounded-2xl bg-[#fdfbf7] hover:bg-stone-100 text-slate-800 text-xs font-black border border-stone-300 shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer"
             >
-              <Sparkles className="w-4 h-4 text-amber-500" />
-              <span>定期テスト予想問題一覧へ</span>
+              <Award className="w-4 h-4 text-amber-500" />
+              <span>マイページ成績を見る</span>
             </button>
 
             <button
@@ -284,7 +438,7 @@ export const WeeklyQuizView: React.FC = () => {
                       <span className="w-6 h-6 rounded-lg bg-stone-100 text-slate-800 flex items-center justify-center text-[10px]">
                         {r.rank}
                       </span>
-                      <span>スコア: {r.score}問正解</span>
+                      <span>最高スコア: {r.score}問正解</span>
                     </div>
                   </div>
                 ))}
@@ -296,11 +450,11 @@ export const WeeklyQuizView: React.FC = () => {
           <div className="space-y-4 pt-2">
             <h4 className="text-sm font-black text-slate-900 flex items-center gap-2">
               <HelpCircle className="w-4 h-4 text-[#1c603a]" />
-              <span>全問題の解答と詳しい解説</span>
+              <span>{isReviewMode ? '復習問題の解答と詳しい解説' : '全問題の解答と詳しい解説'}</span>
             </h4>
 
             <div className="space-y-3">
-              {activeQuiz.questions.map((q, idx) => {
+              {activeQuestions.map((q, idx) => {
                 const userAns = selectedAnswers[idx];
                 const isCorrect = userAns === q.correctIndex;
 
@@ -498,7 +652,7 @@ export const WeeklyQuizView: React.FC = () => {
                           <span className="text-[10px] tracking-wider font-extrabold uppercase opacity-80">
                             ENG
                           </span>
-                          <span className="text-xl font-black mt-0.5">1900</span>
+                          <span className="text-lg font-black mt-0.5">LEAP</span>
                         </>
                       ) : quiz.category === 'mizoblue' ? (
                         <>
@@ -507,10 +661,17 @@ export const WeeklyQuizView: React.FC = () => {
                           </span>
                           <span className="text-xl font-black mt-0.5">理科</span>
                         </>
-                      ) : (
+                      ) : quiz.category === 'ai_predicted' ? (
                         <>
                           <Sparkles className="w-5 h-5 text-amber-300" />
                           <span className="text-[10px] font-black mt-0.5">AI予想</span>
+                        </>
+                      ) : (
+                        <>
+                          <BookOpen className="w-5 h-5 opacity-90" />
+                          <span className="text-[10px] font-black mt-1 px-1 truncate max-w-full">
+                            {quiz.category.slice(0, 6)}
+                          </span>
                         </>
                       )}
                     </div>
@@ -521,8 +682,9 @@ export const WeeklyQuizView: React.FC = () => {
                       <div className="text-xs sm:text-sm font-black text-slate-900 tracking-tight flex items-center justify-between">
                         <span>所要時間 約{quiz.durationMinutes}分 · 全{quiz.questions.length}問</span>
                         {hasTaken && (
-                          <span className="text-[11px] font-black text-[#1c603a] bg-[#f4f8f5] px-2 py-0.5 rounded-full border border-[#1c603a]/20">
-                            スコア: {standing.myScore}/{quiz.questions.length}
+                          <span className="text-[11px] font-black text-[#1c603a] bg-[#f4f8f5] px-2 py-0.5 rounded-full border border-[#1c603a]/20 tabular-nums">
+                            最高: {standing.bestScore ?? standing.myScore}/{quiz.questions.length}
+                            {standing.attemptCount > 0 ? ` (${standing.attemptCount}回)` : ''}
                           </span>
                         )}
                       </div>
@@ -540,7 +702,9 @@ export const WeeklyQuizView: React.FC = () => {
                             ? '英語・英単語'
                             : quiz.category === 'mizoblue'
                             ? '理科・教養'
-                            : 'AI出題予想'}
+                            : quiz.category === 'ai_predicted'
+                            ? 'AI出題予想'
+                            : quiz.category}
                         </span>
                         <span aria-hidden="true">·</span>
                         <span className="text-stone-400 font-semibold">{quiz.weekLabel}</span>

@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { MaterialSubject, StudyMaterial } from '../types';
+import { getLastSeenAt, markSectionSeen, isItemUnseenNew } from '../utils/newBadge';
+import { FullscreenMaterialModal } from './FullscreenMaterialModal';
 import {
   FileText,
   Image as ImageIcon,
@@ -10,12 +12,10 @@ import {
   Check,
   Printer,
   Maximize2,
-  Minimize2,
   Upload,
   BookOpen,
   Download,
   Trash2,
-  ExternalLink,
   AlertTriangle,
   RefreshCw,
   AlertCircle,
@@ -24,6 +24,7 @@ import {
   ArrowUpDown,
   ChevronRight,
   Eye,
+  ZoomIn,
 } from 'lucide-react';
 
 export const MaterialShareView: React.FC = () => {
@@ -112,23 +113,32 @@ export const MaterialShareView: React.FC = () => {
   const selectedMaterial: StudyMaterial | undefined =
     materials.find((m) => m.id === activeMaterialId) || filteredMaterials[0] || materials[0];
 
+  // Track initial last-seen timestamp to highlight unseen NEW materials on this visit, then clear home badge
+  const initialLastSeenRef = useRef<number>(getLastSeenAt('materials'));
+  useEffect(() => {
+    markSectionSeen('materials');
+  }, [materials.length]);
+
   // Reset image error state whenever selected material changes
   useEffect(() => {
     setImgError(false);
   }, [selectedMaterial?.id]);
 
-  // Handle ESC key to close modals
+  // Handle ESC key to close modals (fullscreen modal takes priority)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (isFullscreenPreview) {
+          setIsFullscreenPreview(false);
+          return;
+        }
         setIsMobileDetailOpen(false);
-        setIsFullscreenPreview(false);
         setIsUploadOpen(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [isFullscreenPreview]);
 
   const handleCardClick = (matId: string) => {
     setActiveMaterialId(matId);
@@ -315,20 +325,17 @@ export const MaterialShareView: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
-            {!isMobileModal && (
-              <button
-                onClick={() => setIsFullscreenPreview(!isFullscreenPreview)}
-                className="p-2 rounded-2xl bg-stone-100 hover:bg-stone-200 text-slate-700 transition-all cursor-pointer border border-stone-200"
-                title={isFullscreenPreview ? '全画面表示を解除' : '全画面で拡大表示'}
-              >
-                {isFullscreenPreview ? (
-                  <Minimize2 className="w-4 h-4" />
-                ) : (
-                  <Maximize2 className="w-4 h-4" />
-                )}
-              </button>
-            )}
             <button
+              type="button"
+              onClick={() => setIsFullscreenPreview(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black transition-all cursor-pointer shadow-2xs"
+              title="全画面で拡大表示"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+              <span>{isMobileModal ? '拡大（全画面）' : '全画面で拡大'}</span>
+            </button>
+            <button
+              type="button"
               onClick={() => window.print()}
               className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-stone-100 hover:bg-stone-200 text-slate-700 text-xs font-black transition-all cursor-pointer border border-stone-200"
             >
@@ -336,6 +343,7 @@ export const MaterialShareView: React.FC = () => {
               <span>印刷</span>
             </button>
             <button
+              type="button"
               onClick={() => handleDeleteMaterial(selectedMaterial.id)}
               className="flex items-center gap-1 px-3 py-2 rounded-2xl bg-stone-100 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 text-stone-500 text-xs font-black transition-all cursor-pointer border border-stone-200"
               title="この教材を削除する"
@@ -376,26 +384,25 @@ export const MaterialShareView: React.FC = () => {
                       <Download className="w-3.5 h-3.5" />
                       <span>保存</span>
                     </a>
-                    <a
-                      href={activePdfSource}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#1c603a] hover:bg-[#154a2c] text-white font-bold text-xs shadow-2xs"
+                    <button
+                      type="button"
+                      onClick={() => setIsFullscreenPreview(true)}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#1c603a] hover:bg-[#154a2c] text-white font-bold text-xs shadow-2xs cursor-pointer"
                     >
-                      <ExternalLink className="w-3.5 h-3.5" />
+                      <Maximize2 className="w-3.5 h-3.5" />
                       <span>全画面で開く</span>
-                    </a>
+                    </button>
                   </div>
                 </div>
 
                 <div
-                  className={`border border-stone-200 rounded-3xl overflow-hidden shadow-xs bg-stone-50 ${
+                  className={`border border-stone-200 rounded-3xl overflow-auto pinch-zoom-surface shadow-xs bg-stone-50 ${
                     isMobileModal ? 'h-[420px]' : 'h-[600px] sm:h-[700px]'
                   }`}
                 >
                   <iframe
                     src={activePdfSource}
-                    className="w-full h-full border-0"
+                    className="w-full h-full border-0 touch-auto"
                     title={selectedMaterial.title}
                   />
                 </div>
@@ -432,14 +439,32 @@ export const MaterialShareView: React.FC = () => {
                 </div>
               </div>
             ) : selectedMaterial.imageUrl ? (
-              /* Image View */
-              <div className="border border-stone-200 rounded-3xl overflow-hidden bg-slate-900 shadow-inner p-2 sm:p-4 text-center min-h-[300px] flex items-center justify-center">
-                <img
-                  src={selectedMaterial.imageUrl}
-                  alt={selectedMaterial.title}
-                  onError={() => setImgError(true)}
-                  className="max-h-[580px] w-auto max-w-full mx-auto object-contain rounded-2xl shadow-md bg-white"
-                />
+              /* Image View (Supports mobile 2-finger pinch-zoom & smooth panning) */
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2 text-[11px] font-bold text-stone-500 px-1">
+                  <span className="inline-flex items-center gap-1 text-[#1c603a]">
+                    <ZoomIn className="w-3.5 h-3.5" />
+                    <span>スマホでは指2本（ピンチアウト）で拡大・移動できます</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsFullscreenPreview(true)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-[#1c603a] font-black shrink-0 cursor-pointer"
+                  >
+                    <Maximize2 className="w-3 h-3" />
+                    <span>全画面で拡大</span>
+                  </button>
+                </div>
+                <div className="border border-stone-200 rounded-3xl overflow-auto pinch-zoom-surface bg-slate-900 shadow-inner p-2 sm:p-4 text-center min-h-[300px] flex items-center justify-center">
+                  <img
+                    src={selectedMaterial.imageUrl}
+                    alt={selectedMaterial.title}
+                    onClick={() => setIsFullscreenPreview(true)}
+                    onError={() => setImgError(true)}
+                    title="タップまたはクリックで全画面表示"
+                    className="max-h-[580px] w-auto max-w-full mx-auto object-contain rounded-2xl shadow-md bg-white touch-auto cursor-zoom-in"
+                  />
+                </div>
               </div>
             ) : (
               /* Empty Placeholder */
@@ -755,10 +780,15 @@ export const MaterialShareView: React.FC = () => {
                       </div>
 
                       <div className="flex-1 min-w-0">
-                        <div className="text-[11px] font-black text-stone-400 uppercase tracking-tight flex items-center gap-1.5">
+                        <div className="text-[11px] font-black text-stone-400 uppercase tracking-tight flex items-center gap-1.5 flex-wrap">
                           <span>{mat.fileType.toUpperCase()}</span>
                           <span aria-hidden="true">·</span>
                           <span>{mat.fileSize}</span>
+                          {isItemUnseenNew(mat, initialLastSeenRef.current) && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-rose-500 text-white text-[9px] font-black tracking-normal">
+                              NEW
+                            </span>
+                          )}
                         </div>
 
                         <h3 className="text-sm font-black leading-snug my-0.5 text-slate-900 truncate group-hover:text-[#1c603a] transition-colors">
@@ -789,13 +819,7 @@ export const MaterialShareView: React.FC = () => {
 
           {/* Right Column: Desktop Permanent Preview (HIDDEN ON MOBILE, VISIBLE ON LG+) */}
           <div className="hidden lg:block lg:col-span-8">
-            <div
-              className={`transition-all ${
-                isFullscreenPreview
-                  ? 'fixed inset-4 z-50 bg-white rounded-3xl p-6 sm:p-8 shadow-2xl border border-stone-400 overflow-y-auto max-w-5xl mx-auto'
-                  : 'bg-white rounded-3xl p-5 sm:p-7 border border-stone-200/90 shadow-xs'
-              }`}
-            >
+            <div className="bg-white rounded-3xl p-5 sm:p-7 border border-stone-200/90 shadow-xs transition-all">
               {selectedMaterial ? (
                 renderPreviewContent(false)
               ) : (
@@ -836,8 +860,8 @@ export const MaterialShareView: React.FC = () => {
               </button>
             </div>
 
-            {/* Scrollable Preview Body */}
-            <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-4">
+            {/* Scrollable Preview Body (Supports Pinch-Zoom & Panning) */}
+            <div className="p-4 sm:p-6 overflow-auto pinch-zoom-surface flex-1 space-y-4">
               {renderPreviewContent(true)}
 
               {/* Bottom Quick Close Button */}
@@ -1020,6 +1044,12 @@ export const MaterialShareView: React.FC = () => {
           </div>
         </div>
       )}
+      {/* 5. In-App Fullscreen Material Modal (Works on Mobile & Desktop, supports Base64/URL/PDF & Pinch-Zoom) */}
+      <FullscreenMaterialModal
+        isOpen={isFullscreenPreview}
+        onClose={() => setIsFullscreenPreview(false)}
+        material={selectedMaterial}
+      />
     </div>
   );
 };

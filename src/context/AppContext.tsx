@@ -13,6 +13,7 @@ import {
   PersonalStanding,
   ScoreDistributionBin,
   SubjectScores,
+  PeriodicTestSchedule,
 } from '../types';
 import {
   INITIAL_STUDENTS,
@@ -51,6 +52,20 @@ import {
   deleteStudentPredictionFromCloud,
   fetchStudentPredictionsFromCloud,
   subscribeToStudentPredictions,
+  saveQuizToCloud,
+  deleteQuizFromCloud,
+  fetchQuizzesFromCloud,
+  subscribeToQuizzes,
+  saveQuizSubmissionToCloud,
+  fetchQuizSubmissionsFromCloud,
+  subscribeToQuizSubmissions,
+  savePeriodicTestToCloud,
+  deletePeriodicTestFromCloud,
+  fetchPeriodicTestsFromCloud,
+  subscribeToPeriodicTests,
+  savePostToCloud,
+  fetchPostsFromCloud,
+  subscribeToPosts,
 } from '../utils/firebase';
 
 import { AppTab } from '../types';
@@ -76,11 +91,13 @@ interface AppContextType {
 
   // Test & Score Management
   testRecords: TestRecord[];
+  periodicTests: PeriodicTestSchedule[];
   availableTestTitles: string[];
   activeTestTitle: string;
   setActiveTestTitle: (title: string) => void;
   saveMyScore: (testTitle: string, testDate: string, scores: SubjectScores) => void;
-  addPeriodicTest: (title: string, date: string) => void;
+  addPeriodicTest: (title: string, date: string) => Promise<void>;
+  deletePeriodicTest: (testId: string) => Promise<void>;
 
   // Privacy Protected Rankings (Public & Personal)
   anonymousRankings: AnonymousRankItem[];
@@ -91,15 +108,15 @@ interface AppContextType {
   // Quizzes (English & Mizo-Blue)
   quizzes: WeeklyQuiz[];
   quizSubmissions: QuizResult[];
-  submitQuiz: (quizId: string, answers: number[]) => { score: number; maxScore: number; rank: number; total: number };
+  submitQuiz: (quizId: string, answers: number[]) => { score: number; bestScore: number; attemptCount: number; maxScore: number; rank: number; total: number };
   getQuizAnonymousRankings: (quizId: string) => AnonymousRankItem[];
-  getMyQuizStanding: (quizId: string) => { myScore: number | null; myRank: number | null; total: number; avg: number } | null;
-  updateQuiz: (quiz: WeeklyQuiz) => void;
-  addQuiz: (quiz: WeeklyQuiz) => void;
-  deleteQuiz: (quizId: string) => void;
-  updateQuizQuestion: (quizId: string, qIndex: number, question: QuizQuestion) => void;
-  addQuizQuestion: (quizId: string, question: QuizQuestion) => void;
-  deleteQuizQuestion: (quizId: string, questionId: string) => void;
+  getMyQuizStanding: (quizId: string) => { myScore: number | null; bestScore: number | null; attemptCount: number; maxScore: number | null; completedAt: string | null; myRank: number | null; total: number; avg: number } | null;
+  updateQuiz: (quiz: WeeklyQuiz) => Promise<void>;
+  addQuiz: (quiz: WeeklyQuiz) => Promise<void>;
+  deleteQuiz: (quizId: string) => Promise<void>;
+  updateQuizQuestion: (quizId: string, qIndex: number, question: QuizQuestion) => Promise<void>;
+  addQuizQuestion: (quizId: string, question: QuizQuestion) => Promise<void>;
+  deleteQuizQuestion: (quizId: string, questionId: string) => Promise<void>;
 
   // Study Materials
   materials: StudyMaterial[];
@@ -122,6 +139,8 @@ interface AppContextType {
   // Navigation
   currentTab: AppTab;
   setCurrentTab: (tab: AppTab) => void;
+  editSectionHint: 'quizzes' | 'periodic' | 'subjects' | null;
+  setEditSectionHint: (section: 'quizzes' | 'periodic' | 'subjects' | null) => void;
 
   // Anti-Data-Loss & Cloud Sync Tools
   isStorageHydrated: boolean;
@@ -147,6 +166,7 @@ const STORAGE_KEYS = {
   POSTS: 'classhub_posts',
   PASSWORDS: 'classhub_passwords',
   ACTIVE_TEST: 'classhub_active_test',
+  PERIODIC_TESTS: 'classhub_periodic_tests',
   CUSTOM_SUBJECTS: 'classhub_custom_subjects',
 };
 
@@ -160,12 +180,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // 2. Main Content States
   const [customSubjects, setCustomSubjects] = useState<SubjectOption[]>([]);
   const [testRecords, setTestRecords] = useState<TestRecord[]>([]);
+  const [periodicTests, setPeriodicTests] = useState<PeriodicTestSchedule[]>([]);
   const [activeTestTitle, setActiveTestTitle] = useState<string>('第1回 定期考査');
   const [quizzes, setQuizzes] = useState<WeeklyQuiz[]>(INITIAL_QUIZZES);
   const [quizSubmissions, setQuizSubmissions] = useState<QuizResult[]>([]);
   const [materials, setMaterials] = useState<StudyMaterial[]>([]);
   const [studentPredictions, setStudentPredictions] = useState<StudentPrediction[]>([]);
   const [posts, setPosts] = useState<ForumPost[]>([]);
+  const [editSectionHint, setEditSectionHint] = useState<'quizzes' | 'periodic' | 'subjects' | null>(null);
 
   // Cloud Sync & Reliability State (surfaces Firestore connection & save issues directly on UI)
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'connected' | 'syncing' | 'error'>('syncing');
@@ -173,6 +195,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Hydration status guard: prevents React initial empty state from wiping persisted data
   const isHydratedRef = useRef<boolean>(false);
+  const hasSyncedCloudQuizzesRef = useRef<boolean>(false);
   const [isStorageHydrated, setIsStorageHydrated] = useState<boolean>(false);
 
   // Async Storage Hydration on Mount: Loads both from IndexedDB & Server Storage, merging safely
@@ -294,25 +317,109 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           });
         }
 
-        const quizzesMap = new Map<string, WeeklyQuiz>();
-        (serverData?.quizzes || []).forEach((q: WeeklyQuiz) => { if (q?.id) quizzesMap.set(q.id, q); });
-        (localQuizzes || []).forEach((q) => { if (q?.id) quizzesMap.set(q.id, q); });
-        const mergedQuizzes = Array.from(quizzesMap.values());
+        let cloudQuizzes: WeeklyQuiz[] = [];
+        try {
+          cloudQuizzes = await fetchQuizzesFromCloud();
+        } catch (e) {
+          console.warn('Firebase cloud quizzes fetch notice:', e);
+        }
+
+        const migrateQuizTitle = (q: WeeklyQuiz): WeeklyQuiz =>
+          q.id === 'quiz-eng-w4' && q.title === '第4週 英単語ターゲット 500演習'
+            ? { ...q, title: 'LEAP テスト' }
+            : q;
+
+        let mergedQuizzes: WeeklyQuiz[] = [];
+        if (cloudQuizzes.length > 0) {
+          mergedQuizzes = cloudQuizzes.map((q) => {
+            const migrated = migrateQuizTitle(q);
+            if (migrated.title !== q.title) {
+              saveQuizToCloud(migrated).catch(() => {});
+            }
+            return migrated;
+          });
+          hasSyncedCloudQuizzesRef.current = true;
+        } else {
+          const quizzesMap = new Map<string, WeeklyQuiz>();
+          (serverData?.quizzes || []).forEach((q: WeeklyQuiz) => {
+            if (q?.id) quizzesMap.set(q.id, migrateQuizTitle(q));
+          });
+          (localQuizzes || []).forEach((q) => {
+            if (q?.id) quizzesMap.set(q.id, migrateQuizTitle(q));
+          });
+          const localOrServerQuizzes = Array.from(quizzesMap.values());
+          mergedQuizzes = localOrServerQuizzes.length > 0 ? localOrServerQuizzes : INITIAL_QUIZZES;
+          // Seed Firestore with quizzes so all devices share the same quizzes collection
+          Promise.all(mergedQuizzes.map((q) => saveQuizToCloud(q).catch(() => {}))).then(() => {
+            hasSyncedCloudQuizzesRef.current = true;
+          });
+        }
 
         const recordsMap = new Map<string, TestRecord>();
         (serverData?.testRecords || []).forEach((r: TestRecord) => { if (r?.id) recordsMap.set(r.id, r); });
         (localRecords || []).forEach((r) => { if (r?.id) recordsMap.set(r.id, r); });
         const mergedRecords = Array.from(recordsMap.values());
 
+        let cloudPosts: ForumPost[] = [];
+        try {
+          cloudPosts = await fetchPostsFromCloud();
+        } catch (e) {
+          console.warn('Firebase cloud posts fetch notice:', e);
+        }
+
         const postsMap = new Map<string, ForumPost>();
         (serverData?.posts || []).forEach((p: ForumPost) => { if (p?.id) postsMap.set(p.id, p); });
         (localPosts || []).forEach((p) => { if (p?.id) postsMap.set(p.id, p); });
-        const mergedPosts = Array.from(postsMap.values());
+        (cloudPosts || []).forEach((p) => { if (p?.id) postsMap.set(p.id, p); });
+        const mergedPosts = Array.from(postsMap.values()).sort(
+          (a, b) => (b.createdAtMs || Date.parse(b.createdAt) || 0) - (a.createdAtMs || Date.parse(a.createdAt) || 0)
+        );
+
+        let cloudSubs: QuizResult[] = [];
+        try {
+          cloudSubs = await fetchQuizSubmissionsFromCloud();
+        } catch (e) {
+          console.warn('Firebase cloud quizSubmissions fetch notice:', e);
+        }
+
+        const mergeQuizSubmission = (prevItem: QuizResult | undefined, nextItem: QuizResult): QuizResult => {
+          if (!prevItem) return nextItem;
+          const prevAttempts = prevItem.attemptCount ?? 1;
+          const nextAttempts = nextItem.attemptCount ?? 1;
+          const prevBest = prevItem.bestScore ?? prevItem.score;
+          const nextBest = nextItem.bestScore ?? nextItem.score;
+          const useNext =
+            nextAttempts > prevAttempts ||
+            (nextAttempts === prevAttempts && (nextItem.completedAt || '') >= (prevItem.completedAt || ''));
+          const chosen = useNext ? nextItem : prevItem;
+          return {
+            ...chosen,
+            bestScore: Math.max(prevBest, nextBest),
+            attemptCount: Math.max(prevAttempts, nextAttempts),
+          };
+        };
 
         const subsMap = new Map<string, QuizResult>();
-        (serverData?.quizSubmissions || []).forEach((s: QuizResult) => { if (s?.id) subsMap.set(s.id, s); });
-        (localSubs || []).forEach((s) => { if (s?.id) subsMap.set(s.id, s); });
+        [...(serverData?.quizSubmissions || []), ...(localSubs || []), ...(cloudSubs || [])].forEach((s: QuizResult) => {
+          if (!s?.quizId || !s?.studentNumber) return;
+          const key = `${s.quizId}_student_${s.studentNumber}`;
+          subsMap.set(key, mergeQuizSubmission(subsMap.get(key), s));
+        });
         const mergedSubs = Array.from(subsMap.values());
+
+        let cloudPeriodicTests: PeriodicTestSchedule[] = [];
+        try {
+          cloudPeriodicTests = await fetchPeriodicTestsFromCloud();
+        } catch (e) {
+          console.warn('Firebase cloud periodicTests fetch notice:', e);
+        }
+        const localPeriodicTests = await getPersistentItem<PeriodicTestSchedule[]>(STORAGE_KEYS.PERIODIC_TESTS, []);
+        const periodicMap = new Map<string, PeriodicTestSchedule>();
+        (localPeriodicTests || []).forEach((p) => { if (p?.id) periodicMap.set(p.id, p); });
+        (cloudPeriodicTests || []).forEach((p) => { if (p?.id) periodicMap.set(p.id, p); });
+        const mergedPeriodicTests = Array.from(periodicMap.values()).sort((a, b) =>
+          (a.date || '').localeCompare(b.date || '')
+        );
 
         const subjectsMap = new Map<string, SubjectOption>();
         (serverData?.customSubjects || []).forEach((s: SubjectOption) => { if (s?.key) subjectsMap.set(s.key, s); });
@@ -325,6 +432,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setPasswords(mergedPasses);
           setIsLoggedIn(savedLoggedIn);
           setTestRecords(mergedRecords);
+          setPeriodicTests(mergedPeriodicTests);
           setMaterials(mergedMaterials);
           setStudentPredictions(mergedPredictions);
           setPosts(mergedPosts);
@@ -437,6 +545,97 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => unsubscribe();
   }, []);
 
+  // Real-time Firestore subscription for WeeklyQuizzes across all devices
+  useEffect(() => {
+    const unsubscribe = subscribeToQuizzes(
+      (cloudList) => {
+        if (cloudList.length > 0 || hasSyncedCloudQuizzesRef.current) {
+          hasSyncedCloudQuizzesRef.current = true;
+          setQuizzes(cloudList);
+          if (isHydratedRef.current) {
+            setPersistentItem(STORAGE_KEYS.QUIZZES, cloudList);
+          }
+        }
+      },
+      (err) => {
+        console.warn('Quizzes subscription error:', err);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  // Real-time Firestore subscription for Quiz Submissions across all devices
+  useEffect(() => {
+    const unsubscribe = subscribeToQuizSubmissions((cloudList) => {
+      if (!cloudList) return;
+      setQuizSubmissions((prev) => {
+        const map = new Map<string, QuizResult>();
+        [...prev, ...cloudList].forEach((s) => {
+          if (!s?.quizId || !s?.studentNumber) return;
+          const key = `${s.quizId}_student_${s.studentNumber}`;
+          const existing = map.get(key);
+          if (!existing) {
+            map.set(key, s);
+          } else {
+            const prevAttempts = existing.attemptCount ?? 1;
+            const nextAttempts = s.attemptCount ?? 1;
+            const useNext =
+              nextAttempts > prevAttempts ||
+              (nextAttempts === prevAttempts && (s.completedAt || '') >= (existing.completedAt || ''));
+            const chosen = useNext ? s : existing;
+            map.set(key, {
+              ...chosen,
+              bestScore: Math.max(existing.bestScore ?? existing.score, s.bestScore ?? s.score),
+              attemptCount: Math.max(prevAttempts, nextAttempts),
+            });
+          }
+        });
+        const merged = Array.from(map.values());
+        if (isHydratedRef.current) {
+          setPersistentItem(STORAGE_KEYS.QUIZ_SUBMISSIONS, merged);
+        }
+        return merged;
+      });
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Real-time Firestore subscription for Periodic Test Schedules
+  useEffect(() => {
+    const unsubscribe = subscribeToPeriodicTests((cloudList) => {
+      if (!cloudList) return;
+      setPeriodicTests((prev) => {
+        if (cloudList.length === 0 && prev.length === 0) return prev;
+        if (isHydratedRef.current) {
+          setPersistentItem(STORAGE_KEYS.PERIODIC_TESTS, cloudList);
+        }
+        return cloudList;
+      });
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Real-time Firestore subscription for Forum Posts
+  useEffect(() => {
+    const unsubscribe = subscribeToPosts((cloudList) => {
+      if (!cloudList || cloudList.length === 0) return;
+      setPosts((prev) => {
+        const map = new Map<string, ForumPost>();
+        prev.forEach((p) => { if (p?.id) map.set(p.id, p); });
+        cloudList.forEach((p) => { if (p?.id) map.set(p.id, p); });
+        const merged = Array.from(map.values()).sort(
+          (a, b) => (b.createdAtMs || Date.parse(b.createdAt) || 0) - (a.createdAtMs || Date.parse(a.createdAt) || 0)
+        );
+        if (isHydratedRef.current) {
+          setPersistentItem(STORAGE_KEYS.POSTS, merged);
+        }
+        return merged;
+      });
+    });
+    return () => unsubscribe();
+  }, []);
+
   // Persistent State Effects (GUARDED: never overwrite storage before hydration completes!)
   useEffect(() => {
     if (!isHydratedRef.current) return;
@@ -522,6 +721,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!isHydratedRef.current) return;
     setPersistentItem(STORAGE_KEYS.ACTIVE_TEST, activeTestTitle);
   }, [activeTestTitle]);
+
+  useEffect(() => {
+    if (!isHydratedRef.current) return;
+    setPersistentItem(STORAGE_KEYS.PERIODIC_TESTS, periodicTests);
+  }, [periodicTests]);
 
   useEffect(() => {
     if (!isHydratedRef.current) return;
@@ -768,11 +972,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const availableTestTitles = useMemo(() => {
     const set = new Set<string>();
+    periodicTests.forEach((p) => {
+      if (p.title) set.add(p.title);
+    });
     if (activeTestTitle) set.add(activeTestTitle);
     testRecords.forEach((r) => set.add(r.testTitle));
     if (set.size === 0) set.add('第1回 定期考査');
     return Array.from(set);
-  }, [testRecords, activeTestTitle]);
+  }, [periodicTests, testRecords, activeTestTitle]);
 
   const currentTestRecords = useMemo(() => {
     return testRecords.filter((r) => r.testTitle === activeTestTitle);
@@ -836,11 +1043,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return calculateDistribution(scores, 500);
   }, [currentTestRecords]);
 
-  // Quiz Handling
+  // Quiz Handling (Cloud-synced bestScore, attemptCount, category, quizTitle)
   const submitQuiz = (quizId: string, answers: number[]) => {
     const quiz = quizzes.find((q) => q.id === quizId);
     if (!quiz || !currentStudentNum) {
-      return { score: 0, maxScore: 5, rank: 0, total: 0 };
+      return { score: 0, bestScore: 0, attemptCount: 1, maxScore: 5, rank: 0, total: 0 };
     }
 
     let correctCount = 0;
@@ -850,12 +1057,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     });
 
+    const existingSub = quizSubmissions.find(
+      (s) => s.quizId === quizId && s.studentNumber === currentStudentNum
+    );
+    const prevBest = existingSub ? (existingSub.bestScore ?? existingSub.score) : 0;
+    const prevAttempts = existingSub ? (existingSub.attemptCount ?? 1) : 0;
+    const nextBest = Math.max(prevBest, correctCount);
+    const nextAttempts = prevAttempts + 1;
+
     const newSubmission: QuizResult = {
-      id: `sub-${quizId}-${currentStudentNum}-${Date.now()}`,
+      id: `${quizId}_student_${currentStudentNum}`,
       quizId,
+      quizTitle: quiz.title,
+      category: quiz.category,
       studentNumber: currentStudentNum,
       score: correctCount,
+      bestScore: nextBest,
       maxScore: quiz.questions.length,
+      attemptCount: nextAttempts,
       answers,
       completedAt: new Date().toISOString(),
     };
@@ -864,19 +1083,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const filtered = prev.filter(
         (s) => !(s.quizId === quizId && s.studentNumber === currentStudentNum)
       );
-      return [newSubmission, ...filtered];
+      const next = [newSubmission, ...filtered];
+      setPersistentItem(STORAGE_KEYS.QUIZ_SUBMISSIONS, next);
+      return next;
     });
+
+    // Save to Firebase Firestore asynchronously
+    saveQuizSubmissionToCloud(newSubmission).catch(() => {});
 
     const allQuizSubs = quizSubmissions.filter((s) => s.quizId === quizId);
     const updatedSubs = [
       newSubmission,
       ...allQuizSubs.filter((s) => s.studentNumber !== currentStudentNum),
     ];
-    const items = updatedSubs.map((s) => ({ studentNumber: s.studentNumber, score: s.score }));
+    const items = updatedSubs.map((s) => ({
+      studentNumber: s.studentNumber,
+      score: s.bestScore ?? s.score,
+    }));
     const standing = calculatePersonalStanding(items, currentStudentNum);
 
     return {
       score: correctCount,
+      bestScore: nextBest,
+      attemptCount: nextAttempts,
       maxScore: quiz.questions.length,
       rank: standing.myRank || 1,
       total: standing.totalParticipants,
@@ -885,16 +1114,27 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const getQuizAnonymousRankings = (quizId: string): AnonymousRankItem[] => {
     const subs = quizSubmissions.filter((s) => s.quizId === quizId);
-    const items = subs.map((s) => ({ studentNumber: s.studentNumber, score: s.score }));
+    const items = subs.map((s) => ({
+      studentNumber: s.studentNumber,
+      score: s.bestScore ?? s.score,
+    }));
     return calculateAnonymousRankings(items);
   };
 
   const getMyQuizStanding = (quizId: string) => {
     const subs = quizSubmissions.filter((s) => s.quizId === quizId);
-    const items = subs.map((s) => ({ studentNumber: s.studentNumber, score: s.score }));
+    const mySub = subs.find((s) => s.studentNumber === currentStudentNum);
+    const items = subs.map((s) => ({
+      studentNumber: s.studentNumber,
+      score: s.bestScore ?? s.score,
+    }));
     const standing = calculatePersonalStanding(items, currentStudentNum);
     return {
-      myScore: standing.myScore,
+      myScore: mySub ? (mySub.bestScore ?? mySub.score) : standing.myScore,
+      bestScore: mySub ? (mySub.bestScore ?? mySub.score) : null,
+      attemptCount: mySub ? (mySub.attemptCount ?? 1) : 0,
+      maxScore: mySub ? mySub.maxScore : null,
+      completedAt: mySub ? mySub.completedAt : null,
       myRank: standing.myRank,
       total: standing.totalParticipants,
       avg: standing.classAverage,
@@ -916,11 +1156,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
 
+    const nowMs = Date.now();
     const newMat: StudyMaterial = {
       ...material,
       imageUrl: processedImg,
-      id: `mat-user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      createdAt: new Date().toISOString().slice(0, 10),
+      id: `mat-user-${nowMs}-${Math.random().toString(36).slice(2, 7)}`,
+      createdAt: new Date(nowMs).toISOString().slice(0, 10),
+      createdAtMs: nowMs,
       downloadCount: 0,
       authorNickname: author,
     };
@@ -1032,11 +1274,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
 
+    const nowMs = Date.now();
     const newPred: StudentPrediction = {
       ...prediction,
       imageUrl: processedImg,
-      id: `pred-user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      createdAt: new Date().toISOString().slice(0, 10),
+      id: `pred-user-${nowMs}-${Math.random().toString(36).slice(2, 7)}`,
+      createdAt: new Date(nowMs).toISOString().slice(0, 10),
+      createdAtMs: nowMs,
       downloadCount: 0,
       authorNickname: author,
       authorStudentNumber: currentStudentNum,
@@ -1102,14 +1346,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const addPost = (subjectTag: string, title: string, content: string) => {
     if (!currentStudentNum) return;
     const author = currentStudent?.nickname || `出席番号${currentStudentNum}番`;
+    const nowMs = Date.now();
     const newPost: ForumPost = {
-      id: `post-user-${Date.now()}`,
+      id: `post-user-${nowMs}`,
       studentNumber: currentStudentNum,
       authorNickname: author,
       subjectTag,
       title,
       content,
-      createdAt: new Date().toISOString(),
+      createdAt: new Date(nowMs).toISOString(),
+      createdAtMs: nowMs,
       reactions: { like: 0, heart: 0, lightbulb: 0 },
       comments: [],
     };
@@ -1118,6 +1364,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setPersistentItem(STORAGE_KEYS.POSTS, next);
       return next;
     });
+    savePostToCloud(newPost).catch(() => {});
   };
 
   const addComment = (postId: string, content: string) => {
@@ -1130,80 +1377,163 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       content: content.trim(),
       createdAt: new Date().toISOString(),
     };
-    setPosts((prev) =>
-      prev.map((p) => (p.id === postId ? { ...p, comments: [...p.comments, newComment] } : p))
-    );
+    setPosts((prev) => {
+      const next = prev.map((p) => {
+        if (p.id !== postId) return p;
+        const updated = { ...p, comments: [...p.comments, newComment] };
+        savePostToCloud(updated).catch(() => {});
+        return updated;
+      });
+      setPersistentItem(STORAGE_KEYS.POSTS, next);
+      return next;
+    });
   };
 
   const toggleReaction = (postId: string, reactionType: 'like' | 'heart' | 'lightbulb') => {
-    setPosts((prev) =>
-      prev.map((p) => {
+    setPosts((prev) => {
+      const next = prev.map((p) => {
         if (p.id !== postId) return p;
-        return {
+        const updated = {
           ...p,
           reactions: {
             ...p.reactions,
             [reactionType]: p.reactions[reactionType] + 1,
           },
         };
-      })
-    );
+        savePostToCloud(updated).catch(() => {});
+        return updated;
+      });
+      setPersistentItem(STORAGE_KEYS.POSTS, next);
+      return next;
+    });
   };
 
   // Editing functions for /edit
-  const addPeriodicTest = (title: string, date: string) => {
+  const addPeriodicTest = async (title: string, date: string) => {
     const trimmedTitle = title.trim();
     if (!trimmedTitle) return;
     setActiveTestTitle(trimmedTitle);
-  };
 
-  const updateQuiz = (updated: WeeklyQuiz) => {
-    setQuizzes((prev) => prev.map((q) => (q.id === updated.id ? updated : q)));
-  };
+    const existing = periodicTests.find((p) => p.title === trimmedTitle);
+    const schedule: PeriodicTestSchedule = {
+      id: existing ? existing.id : `periodic-${Date.now()}`,
+      title: trimmedTitle,
+      date: date || '',
+      createdAt: existing?.createdAt || new Date().toISOString(),
+    };
 
-  const addQuiz = (newQuiz: WeeklyQuiz) => {
-    setQuizzes((prev) => {
-      const next = [...prev, newQuiz];
-      setPersistentItem(STORAGE_KEYS.QUIZZES, next);
+    setPeriodicTests((prev) => {
+      const next = [...prev.filter((p) => p.id !== schedule.id), schedule].sort((a, b) =>
+        (a.date || '').localeCompare(b.date || '')
+      );
+      setPersistentItem(STORAGE_KEYS.PERIODIC_TESTS, next);
       return next;
     });
+
+    try {
+      await savePeriodicTestToCloud(schedule);
+    } catch (e) {
+      console.warn('Periodic test cloud save notice:', e);
+    }
   };
 
-  const deleteQuiz = (quizId: string) => {
-    setQuizzes((prev) => {
-      const next = prev.filter((q) => q.id !== quizId);
-      setPersistentItem(STORAGE_KEYS.QUIZZES, next);
+  const deletePeriodicTest = async (testId: string) => {
+    setPeriodicTests((prev) => {
+      const next = prev.filter((p) => p.id !== testId);
+      setPersistentItem(STORAGE_KEYS.PERIODIC_TESTS, next);
       return next;
     });
+    try {
+      await deletePeriodicTestFromCloud(testId);
+    } catch (e) {
+      console.warn('Periodic test cloud delete notice:', e);
+    }
   };
 
-  const updateQuizQuestion = (quizId: string, qIndex: number, question: QuizQuestion) => {
-    setQuizzes((prev) =>
-      prev.map((q) => {
-        if (q.id !== quizId) return q;
-        const updatedQuestions = [...q.questions];
-        updatedQuestions[qIndex] = question;
-        return { ...q, questions: updatedQuestions };
-      })
-    );
+  const updateQuiz = async (updated: WeeklyQuiz) => {
+    setCloudSyncStatus('syncing');
+    try {
+      await saveQuizToCloud(updated);
+      setCloudSyncStatus('connected');
+      setCloudSyncError(null);
+      hasSyncedCloudQuizzesRef.current = true;
+
+      setQuizzes((prev) => {
+        const next = prev.map((q) => (q.id === updated.id ? updated : q));
+        setPersistentItem(STORAGE_KEYS.QUIZZES, next);
+        return next;
+      });
+    } catch (e: any) {
+      const msg = e?.message || '小テストのクラウド保存に失敗しました';
+      setCloudSyncStatus('error');
+      setCloudSyncError(msg);
+      throw new Error(msg);
+    }
   };
 
-  const addQuizQuestion = (quizId: string, question: QuizQuestion) => {
-    setQuizzes((prev) =>
-      prev.map((q) => {
-        if (q.id !== quizId) return q;
-        return { ...q, questions: [...q.questions, question] };
-      })
-    );
+  const addQuiz = async (newQuiz: WeeklyQuiz) => {
+    setCloudSyncStatus('syncing');
+    try {
+      await saveQuizToCloud(newQuiz);
+      setCloudSyncStatus('connected');
+      setCloudSyncError(null);
+      hasSyncedCloudQuizzesRef.current = true;
+
+      setQuizzes((prev) => {
+        const next = [...prev.filter((q) => q.id !== newQuiz.id), newQuiz];
+        setPersistentItem(STORAGE_KEYS.QUIZZES, next);
+        return next;
+      });
+    } catch (e: any) {
+      const msg = e?.message || '新規小テストのクラウド保存に失敗しました';
+      setCloudSyncStatus('error');
+      setCloudSyncError(msg);
+      throw new Error(msg);
+    }
   };
 
-  const deleteQuizQuestion = (quizId: string, questionId: string) => {
-    setQuizzes((prev) =>
-      prev.map((q) => {
-        if (q.id !== quizId) return q;
-        return { ...q, questions: q.questions.filter((item) => item.id !== questionId) };
-      })
-    );
+  const deleteQuiz = async (quizId: string) => {
+    setCloudSyncStatus('syncing');
+    try {
+      await deleteQuizFromCloud(quizId);
+      setCloudSyncStatus('connected');
+      setCloudSyncError(null);
+      hasSyncedCloudQuizzesRef.current = true;
+
+      setQuizzes((prev) => {
+        const next = prev.filter((q) => q.id !== quizId);
+        setPersistentItem(STORAGE_KEYS.QUIZZES, next);
+        return next;
+      });
+    } catch (e: any) {
+      const msg = e?.message || '小テストのクラウド削除に失敗しました';
+      setCloudSyncStatus('error');
+      setCloudSyncError(msg);
+      throw new Error(msg);
+    }
+  };
+
+  const updateQuizQuestion = async (quizId: string, qIndex: number, question: QuizQuestion) => {
+    const target = quizzes.find((q) => q.id === quizId);
+    if (!target) return;
+    const updatedQuestions = [...target.questions];
+    updatedQuestions[qIndex] = question;
+    await updateQuiz({ ...target, questions: updatedQuestions });
+  };
+
+  const addQuizQuestion = async (quizId: string, question: QuizQuestion) => {
+    const target = quizzes.find((q) => q.id === quizId);
+    if (!target) return;
+    await updateQuiz({ ...target, questions: [...target.questions, question] });
+  };
+
+  const deleteQuizQuestion = async (quizId: string, questionId: string) => {
+    const target = quizzes.find((q) => q.id === quizId);
+    if (!target) return;
+    await updateQuiz({
+      ...target,
+      questions: target.questions.filter((item) => item.id !== questionId),
+    });
   };
 
   // Sync With Server Manual Trigger
@@ -1319,11 +1649,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         addCustomSubject,
         deleteCustomSubject,
         testRecords,
+        periodicTests,
         availableTestTitles,
         activeTestTitle,
         setActiveTestTitle,
         saveMyScore,
         addPeriodicTest,
+        deletePeriodicTest,
         anonymousRankings,
         anonymousGrowthRankings,
         personalStanding,
@@ -1353,6 +1685,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         toggleReaction,
         currentTab,
         setCurrentTab,
+        editSectionHint,
+        setEditSectionHint,
         isStorageHydrated,
         syncWithServer,
         exportBackupJson,

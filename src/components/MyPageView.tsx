@@ -7,6 +7,12 @@ import {
   Edit2,
   Key,
   BookOpen,
+  Trophy,
+  FlaskConical,
+  Sparkles,
+  CheckCircle2,
+  Target,
+  ChevronRight,
 } from 'lucide-react';
 
 export const MyPageView: React.FC = () => {
@@ -16,7 +22,9 @@ export const MyPageView: React.FC = () => {
     updatePassword,
     personalStanding,
     activeTestTitle,
+    quizzes,
     getMyQuizStanding,
+    setCurrentTab,
   } = useApp();
 
   const [nicknameInput, setNicknameInput] = useState(currentStudent?.nickname || '');
@@ -44,8 +52,41 @@ export const MyPageView: React.FC = () => {
     setTimeout(() => setPasswordSaved(false), 2000);
   };
 
-  const engStanding = getMyQuizStanding('quiz-eng-w4');
-  const mizoStanding = getMyQuizStanding('quiz-mizo-w4');
+  // Show all weekly quizzes + any AI predicted quizzes that the student has attempted
+  const quizCards = quizzes.filter((q) => {
+    if (q.category !== 'ai_predicted') return true;
+    const st = getMyQuizStanding(q.id);
+    return Boolean(st && st.attemptCount > 0);
+  });
+
+  const getQuizIconBadge = (category: string) => {
+    if (category === 'english') {
+      return {
+        bg: 'bg-sky-50 border-sky-200 text-sky-600',
+        label: '英単語',
+        icon: <BookOpen className="w-5 h-5" />,
+      };
+    }
+    if (category === 'mizoblue') {
+      return {
+        bg: 'bg-amber-50 border-amber-200 text-amber-600',
+        label: 'ミゾブルー',
+        icon: <FlaskConical className="w-5 h-5" />,
+      };
+    }
+    if (category === 'ai_predicted') {
+      return {
+        bg: 'bg-rose-50 border-rose-200 text-rose-600',
+        label: 'AI予想問題',
+        icon: <Sparkles className="w-5 h-5" />,
+      };
+    }
+    return {
+      bg: 'bg-emerald-50 border-emerald-200 text-[#1c603a]',
+      label: category || '小テスト',
+      icon: <BookOpen className="w-5 h-5" />,
+    };
+  };
 
   return (
     <div className="space-y-6">
@@ -160,12 +201,12 @@ export const MyPageView: React.FC = () => {
           </span>
         </div>
 
-        {/* 3 Metric Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-          <div className="bg-[#fdfbf7] rounded-2xl p-4 border border-stone-200/90 shadow-2xs">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-7 h-7 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center">
-                <Award className="w-4 h-4" />
+        {/* Top 2 Metric Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+          <div className="bg-[#fdfbf7] rounded-2xl p-4 sm:p-5 border border-stone-200/90 shadow-2xs">
+            <div className="flex items-center gap-2.5 mb-2">
+              <div className="w-9 h-9 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center">
+                <Award className="w-5 h-5" />
               </div>
               <span className="text-xs font-black text-slate-800">総合順位</span>
             </div>
@@ -182,10 +223,10 @@ export const MyPageView: React.FC = () => {
             )}
           </div>
 
-          <div className="bg-[#fdfbf7] rounded-2xl p-4 border border-stone-200/90 shadow-2xs">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-7 h-7 rounded-full bg-emerald-100 text-[#1c603a] flex items-center justify-center">
-                <TrendingUp className="w-4 h-4" />
+          <div className="bg-[#fdfbf7] rounded-2xl p-4 sm:p-5 border border-stone-200/90 shadow-2xs">
+            <div className="flex items-center gap-2.5 mb-2">
+              <div className="w-9 h-9 rounded-2xl bg-emerald-50 border border-emerald-200 text-[#1c603a] flex items-center justify-center">
+                <TrendingUp className="w-5 h-5" />
               </div>
               <span className="text-xs font-black text-slate-800">成長度順位</span>
             </div>
@@ -205,32 +246,101 @@ export const MyPageView: React.FC = () => {
               ◎ 前回テストからの向上順位
             </p>
           </div>
+        </div>
 
-          <div className="bg-[#fdfbf7] rounded-2xl p-4 border border-stone-200/90 shadow-2xs">
-            <div className="flex items-center gap-2 mb-2">
-              <div className="w-7 h-7 rounded-full bg-sky-100 text-sky-800 flex items-center justify-center">
-                <BookOpen className="w-4 h-4" />
+        {/* Cloud-Synced Quiz Results Card */}
+        <div className="bg-[#F5F4EE] rounded-3xl p-4 sm:p-5 border border-stone-200/80 space-y-4">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-sky-50 border border-sky-200 text-sky-600 flex items-center justify-center shrink-0">
+                <Trophy className="w-5 h-5" />
               </div>
-              <span className="text-xs font-black text-slate-800">小テスト成績</span>
-            </div>
-            <div className="space-y-1 mt-1 text-xs font-medium">
-              <div className="flex justify-between text-stone-600">
-                <span>英単語:</span>
-                <span className="font-black text-slate-900">
-                  {engStanding?.myScore !== null && engStanding?.myScore !== undefined
-                    ? `${engStanding.myScore} / 5問`
-                    : '未挑戦'}
-                </span>
-              </div>
-              <div className="flex justify-between text-stone-600">
-                <span>ミゾブルー:</span>
-                <span className="font-black text-slate-900">
-                  {mizoStanding?.myScore !== null && mizoStanding?.myScore !== undefined
-                    ? `${mizoStanding.myScore} / 5問`
-                    : '未挑戦'}
-                </span>
+              <div>
+                <h4 className="text-sm sm:text-base font-black text-slate-900">小テスト成績</h4>
+                <p className="text-[11px] font-semibold text-slate-500">
+                  受験結果・最高得点・受験回数はクラウドに自動保存されます
+                </p>
               </div>
             </div>
+
+            <button
+              onClick={() => setCurrentTab('quiz')}
+              className="inline-flex items-center gap-1 px-3.5 py-2 rounded-2xl bg-white hover:bg-stone-50 border border-stone-200 text-xs font-black text-[#1c603a] cursor-pointer shadow-2xs"
+            >
+              <span>小テストを解く</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {quizCards.map((quiz) => {
+              const standing = getMyQuizStanding(quiz.id);
+              const meta = getQuizIconBadge(quiz.category);
+              const maxQ = standing?.maxScore || quiz.questions.length || 5;
+              const bestScore = standing?.bestScore ?? standing?.myScore;
+              const attempts = standing?.attemptCount ?? 0;
+              const hasAttempted = bestScore !== null && bestScore !== undefined && attempts > 0;
+              const rate = hasAttempted && maxQ > 0 ? Math.round((bestScore / maxQ) * 100) : 0;
+              const isPerfect = hasAttempted && bestScore >= maxQ;
+              const isPassed = hasAttempted && !isPerfect && rate >= 60;
+
+              return (
+                <div
+                  key={quiz.id}
+                  className="bg-white rounded-2xl p-4 border border-stone-200/80 shadow-2xs flex items-center justify-between gap-3"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div
+                      className={`w-11 h-11 rounded-2xl border flex items-center justify-center shrink-0 ${meta.bg}`}
+                    >
+                      {meta.icon}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-bold text-stone-400">
+                        {meta.label}
+                      </div>
+                      <div className="text-xs sm:text-sm font-black text-slate-900 truncate">
+                        {quiz.title}
+                      </div>
+                      <div className="text-[11px] font-bold text-stone-500 mt-0.5 tabular-nums">
+                        {hasAttempted ? `受験 ${attempts}回 · 正答率 ${rate}%` : 'まだ受験していません'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="shrink-0 text-right space-y-1">
+                    {hasAttempted ? (
+                      <>
+                        <div className="text-sm sm:text-base font-black text-slate-900 tabular-nums">
+                          {bestScore}
+                          <span className="text-xs font-bold text-stone-500"> / {maxQ}問</span>
+                        </div>
+                        {isPerfect ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-black">
+                            <Trophy className="w-3 h-3" />
+                            <span>パーフェクト</span>
+                          </span>
+                        ) : isPassed ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[#1c603a] text-[10px] font-black">
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span>合格</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-black">
+                            <Target className="w-3 h-3" />
+                            <span>復習推奨</span>
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-xl bg-stone-100 text-stone-500 text-[11px] font-black">
+                        未挑戦
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

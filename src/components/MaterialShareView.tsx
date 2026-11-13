@@ -19,7 +19,6 @@ import {
   AlertTriangle,
   RefreshCw,
   AlertCircle,
-  WifiOff,
   Search,
   ArrowUpDown,
   ChevronRight,
@@ -34,7 +33,6 @@ export const MaterialShareView: React.FC = () => {
     deleteMaterial,
     setCurrentTab,
     allSubjects,
-    cloudSyncStatus,
     cloudSyncError,
     retryCloudSync,
     students,
@@ -557,38 +555,8 @@ export const MaterialShareView: React.FC = () => {
         {/* Top Header Row */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-stone-100">
           <div>
-            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-              <span className="text-[10px] font-black text-[#1c603a] uppercase tracking-wider">
-                ◎ 1-8 SITE ARCHIVE
-              </span>
-              {/* Cloud Sync Indicator Pill */}
-              <div
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border ${
-                  cloudSyncStatus === 'connected'
-                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                    : cloudSyncStatus === 'syncing'
-                    ? 'bg-amber-50 text-amber-700 border-amber-200'
-                    : 'bg-rose-50 text-rose-700 border-rose-200'
-                }`}
-                title="Firebase Firestoreリアルタイム同期状態"
-              >
-                {cloudSyncStatus === 'connected' ? (
-                  <>
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    <span>全端末同期中 (Firestore)</span>
-                  </>
-                ) : cloudSyncStatus === 'syncing' ? (
-                  <>
-                    <RefreshCw className="w-2.5 h-2.5 animate-spin text-amber-600" />
-                    <span>同期中...</span>
-                  </>
-                ) : (
-                  <>
-                    <WifiOff className="w-2.5 h-2.5 text-rose-600" />
-                    <span>同期未接続</span>
-                  </>
-                )}
-              </div>
+            <div className="text-[10px] font-black text-[#1c603a] uppercase tracking-wider mb-0.5">
+              ◎ 1-8 SITE ARCHIVE
             </div>
             <h2 className="text-lg font-black text-slate-900">定期テスト問題用紙 ＆ 教材ビューア</h2>
             <p className="text-xs text-stone-500 mt-0.5 font-medium">

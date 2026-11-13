@@ -62,6 +62,7 @@
         "title": { "type": "string", "maxLength": 128 },
         "content": { "type": "string", "maxLength": 4000 },
         "createdAt": { "type": "string", "maxLength": 32 },
+        "createdAtMs": { "type": "number" },
         "reactions": { "type": "object" },
         "comments": { "type": "array" }
       },

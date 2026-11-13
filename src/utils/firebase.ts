@@ -4,6 +4,7 @@ import {
   getFirestore,
   collection,
   doc,
+  getDocFromServer,
   setDoc,
   deleteDoc,
   onSnapshot,
@@ -36,6 +37,18 @@ const app = !getApps().length ? initializeApp(FIREBASE_CONFIG) : getApp();
 // CRITICAL: Must pass firestoreDatabaseId as required by AI Studio Firestore Enterprise setup
 export const db: Firestore = getFirestore(app, FIREBASE_CONFIG.firestoreDatabaseId);
 export const auth = getAuth(app);
+
+// Validate initial Firestore server connectivity on boot
+async function validateFirestoreConnection() {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error('Please check your Firebase configuration: client is offline.');
+    }
+  }
+}
+validateFirestoreConnection();
 
 export const COLLECTIONS = {
   MATERIALS: 'materials',
@@ -615,8 +628,31 @@ export function subscribeToPeriodicTests(
   }
 }
 
+function normalizeForumPost(raw: any, fallbackId?: string): ForumPost | null {
+  if (!raw || !raw.title) return null;
+  const id = raw.id || fallbackId;
+  if (!id) return null;
+  return {
+    id: String(id),
+    studentNumber: Number(raw.studentNumber) || 0,
+    authorNickname: String(raw.authorNickname || '匿名'),
+    subjectTag: String(raw.subjectTag || '質問'),
+    title: String(raw.title),
+    content: String(raw.content || ''),
+    createdAt: String(raw.createdAt || new Date().toISOString()),
+    createdAtMs: typeof raw.createdAtMs === 'number' ? raw.createdAtMs : (Date.parse(raw.createdAt) || 0),
+    reactions: {
+      like: Number(raw.reactions?.like) || 0,
+      heart: Number(raw.reactions?.heart) || 0,
+      lightbulb: Number(raw.reactions?.lightbulb) || 0,
+    },
+    comments: Array.isArray(raw.comments) ? raw.comments : [],
+  };
+}
+
 /**
- * Saves or updates a class forum post in Firebase Firestore.
+ * Saves or updates a class forum post in Firebase Firestore (`posts` collection).
+ * Throws an explicit error on failure so the UI can notify or retry instead of silently losing posts.
  */
 export async function savePostToCloud(post: ForumPost): Promise<void> {
   try {
@@ -624,11 +660,21 @@ export async function savePostToCloud(post: ForumPost): Promise<void> {
     const payload = sanitizeForFirestore({
       ...post,
       id: docId,
+      createdAtMs: post.createdAtMs || Date.parse(post.createdAt) || Date.now(),
+      reactions: {
+        like: Number(post.reactions?.like) || 0,
+        heart: Number(post.reactions?.heart) || 0,
+        lightbulb: Number(post.reactions?.lightbulb) || 0,
+      },
+      comments: Array.isArray(post.comments) ? post.comments : [],
     });
     const docRef = doc(db, COLLECTIONS.POSTS, docId);
     await setDoc(docRef, payload, { merge: true });
+    console.info(`[Firebase] Saved forum post to Firestore: ${docId} (${post.title})`);
   } catch (err: any) {
-    console.error('[Firebase] Failed to save forum post:', err?.message || err);
+    const errorMsg = err?.message || String(err);
+    console.error('[Firebase] Failed to save forum post:', errorMsg);
+    throw new Error(`掲示板のクラウド保存エラー: ${errorMsg}`);
   }
 }
 
@@ -640,16 +686,17 @@ export async function fetchPostsFromCloud(): Promise<ForumPost[]> {
     const snap = await getDocs(collection(db, COLLECTIONS.POSTS));
     const list: ForumPost[] = [];
     snap.forEach((d) => {
-      const item = d.data() as ForumPost;
-      if (item && item.id && item.title) {
-        list.push(item);
+      const normalized = normalizeForumPost(d.data(), d.id);
+      if (normalized) {
+        list.push(normalized);
       }
     });
     list.sort((a, b) => (b.createdAtMs || Date.parse(b.createdAt) || 0) - (a.createdAtMs || Date.parse(a.createdAt) || 0));
     return list;
   } catch (err: any) {
-    console.error('[Firebase] Error fetching forum posts:', err?.message || err);
-    return [];
+    const errorMsg = err?.message || String(err);
+    console.error('[Firebase] Error fetching forum posts:', errorMsg);
+    throw new Error(`掲示板のクラウド取得エラー: ${errorMsg}`);
   }
 }
 
@@ -657,7 +704,8 @@ export async function fetchPostsFromCloud(): Promise<ForumPost[]> {
  * Subscribes to real-time updates for class forum posts across all devices.
  */
 export function subscribeToPosts(
-  onUpdate: (posts: ForumPost[]) => void
+  onUpdate: (posts: ForumPost[]) => void,
+  onError?: (error: Error) => void
 ): () => void {
   try {
     const colRef = collection(db, COLLECTIONS.POSTS);
@@ -666,9 +714,9 @@ export function subscribeToPosts(
       (snapshot) => {
         const list: ForumPost[] = [];
         snapshot.forEach((d) => {
-          const item = d.data() as ForumPost;
-          if (item && item.id && item.title) {
-            list.push(item);
+          const normalized = normalizeForumPost(d.data(), d.id);
+          if (normalized) {
+            list.push(normalized);
           }
         });
         list.sort((a, b) => (b.createdAtMs || Date.parse(b.createdAt) || 0) - (a.createdAtMs || Date.parse(a.createdAt) || 0));
@@ -676,10 +724,16 @@ export function subscribeToPosts(
       },
       (error) => {
         console.error('Firestore posts subscription error:', error);
+        if (onError) {
+          onError(new Error(`掲示板リアルタイム同期エラー: ${error.message}`));
+        }
       }
     );
   } catch (e: any) {
     console.error('Failed to attach posts listener:', e);
+    if (onError) {
+      onError(new Error(`掲示板Firestore接続エラー: ${e?.message || String(e)}`));
+    }
     return () => {};
   }
 }

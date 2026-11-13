@@ -132,8 +132,8 @@ interface AppContextType {
 
   // Forum (Board)
   posts: ForumPost[];
-  addPost: (subjectTag: string, title: string, content: string) => void;
-  addComment: (postId: string, content: string) => void;
+  addPost: (subjectTag: string, title: string, content: string) => Promise<void>;
+  addComment: (postId: string, content: string) => Promise<void>;
   toggleReaction: (postId: string, reactionType: 'like' | 'heart' | 'lightbulb') => void;
 
   // Navigation
@@ -169,6 +169,34 @@ const STORAGE_KEYS = {
   PERIODIC_TESTS: 'classhub_periodic_tests',
   CUSTOM_SUBJECTS: 'classhub_custom_subjects',
 };
+
+function mergeForumPost(existing: ForumPost | undefined, incoming: ForumPost): ForumPost {
+  if (!existing) return incoming;
+  const commentMap = new Map<string, ForumPost['comments'][number]>();
+  (existing.comments || []).forEach((c) => {
+    if (c?.id) commentMap.set(c.id, c);
+  });
+  (incoming.comments || []).forEach((c) => {
+    if (c?.id) commentMap.set(c.id, c);
+  });
+  const mergedComments = Array.from(commentMap.values()).sort((a, b) =>
+    (a.createdAt || '').localeCompare(b.createdAt || '')
+  );
+  return {
+    ...existing,
+    ...incoming,
+    createdAtMs: Math.max(
+      existing.createdAtMs || Date.parse(existing.createdAt) || 0,
+      incoming.createdAtMs || Date.parse(incoming.createdAt) || 0
+    ),
+    reactions: {
+      like: Math.max(existing.reactions?.like || 0, incoming.reactions?.like || 0),
+      heart: Math.max(existing.reactions?.heart || 0, incoming.reactions?.heart || 0),
+      lightbulb: Math.max(existing.reactions?.lightbulb || 0, incoming.reactions?.lightbulb || 0),
+    },
+    comments: mergedComments,
+  };
+}
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // 1. Current Student State
@@ -367,13 +395,35 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           console.warn('Firebase cloud posts fetch notice:', e);
         }
 
+        const cloudPostsMap = new Map<string, ForumPost>();
+        (cloudPosts || []).forEach((p) => {
+          if (p?.id) cloudPostsMap.set(p.id, p);
+        });
+
         const postsMap = new Map<string, ForumPost>();
-        (serverData?.posts || []).forEach((p: ForumPost) => { if (p?.id) postsMap.set(p.id, p); });
-        (localPosts || []).forEach((p) => { if (p?.id) postsMap.set(p.id, p); });
-        (cloudPosts || []).forEach((p) => { if (p?.id) postsMap.set(p.id, p); });
+        [...(serverData?.posts || []), ...(localPosts || []), ...(cloudPosts || [])].forEach(
+          (p: ForumPost) => {
+            if (!p?.id) return;
+            postsMap.set(p.id, mergeForumPost(postsMap.get(p.id), p));
+          }
+        );
         const mergedPosts = Array.from(postsMap.values()).sort(
           (a, b) => (b.createdAtMs || Date.parse(b.createdAt) || 0) - (a.createdAtMs || Date.parse(a.createdAt) || 0)
         );
+
+        // Backfill any local/server forum posts or newer comments/reactions to Firestore so app updates never wipe them
+        mergedPosts.forEach((p) => {
+          const cloudCopy = cloudPostsMap.get(p.id);
+          const needsCloudSync =
+            !cloudCopy ||
+            (p.comments?.length || 0) > (cloudCopy.comments?.length || 0) ||
+            (p.reactions?.like || 0) > (cloudCopy.reactions?.like || 0) ||
+            (p.reactions?.heart || 0) > (cloudCopy.reactions?.heart || 0) ||
+            (p.reactions?.lightbulb || 0) > (cloudCopy.reactions?.lightbulb || 0);
+          if (needsCloudSync) {
+            savePostToCloud(p).catch(() => {});
+          }
+        });
 
         let cloudSubs: QuizResult[] = [];
         try {
@@ -618,21 +668,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Real-time Firestore subscription for Forum Posts
   useEffect(() => {
-    const unsubscribe = subscribeToPosts((cloudList) => {
-      if (!cloudList || cloudList.length === 0) return;
-      setPosts((prev) => {
-        const map = new Map<string, ForumPost>();
-        prev.forEach((p) => { if (p?.id) map.set(p.id, p); });
-        cloudList.forEach((p) => { if (p?.id) map.set(p.id, p); });
-        const merged = Array.from(map.values()).sort(
-          (a, b) => (b.createdAtMs || Date.parse(b.createdAt) || 0) - (a.createdAtMs || Date.parse(a.createdAt) || 0)
-        );
-        if (isHydratedRef.current) {
-          setPersistentItem(STORAGE_KEYS.POSTS, merged);
-        }
-        return merged;
-      });
-    });
+    const unsubscribe = subscribeToPosts(
+      (cloudList) => {
+        if (!cloudList || cloudList.length === 0) return;
+        setPosts((prev) => {
+          const map = new Map<string, ForumPost>();
+          prev.forEach((p) => {
+            if (p?.id) map.set(p.id, p);
+          });
+          cloudList.forEach((p) => {
+            if (p?.id) map.set(p.id, mergeForumPost(map.get(p.id), p));
+          });
+          const merged = Array.from(map.values()).sort(
+            (a, b) => (b.createdAtMs || Date.parse(b.createdAt) || 0) - (a.createdAtMs || Date.parse(a.createdAt) || 0)
+          );
+          if (isHydratedRef.current) {
+            setPersistentItem(STORAGE_KEYS.POSTS, merged);
+          }
+          return merged;
+        });
+      },
+      (err) => {
+        console.warn('Forum posts subscription warning:', err);
+      }
+    );
     return () => unsubscribe();
   }, []);
 
@@ -838,22 +897,33 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       )
     );
 
+    const updatedPostsToSync: ForumPost[] = [];
     setPosts((prev) =>
       prev.map((p) => {
         const isPostAuthor = p.studentNumber === currentStudentNum;
-        const updatedComments = p.comments.map((c) =>
-          c.studentNumber === currentStudentNum ? { ...c, authorNickname: trimmed } : c
-        );
-        if (isPostAuthor || updatedComments !== p.comments) {
-          return {
+        let hasCommentChange = false;
+        const updatedComments = p.comments.map((c) => {
+          if (c.studentNumber === currentStudentNum && c.authorNickname !== trimmed) {
+            hasCommentChange = true;
+            return { ...c, authorNickname: trimmed };
+          }
+          return c;
+        });
+        if ((isPostAuthor && p.authorNickname !== trimmed) || hasCommentChange) {
+          const updated = {
             ...p,
             authorNickname: isPostAuthor ? trimmed : p.authorNickname,
             comments: updatedComments,
           };
+          updatedPostsToSync.push(updated);
+          return updated;
         }
         return p;
       })
     );
+    updatedPostsToSync.forEach((p) => {
+      savePostToCloud(p).catch(() => {});
+    });
 
     // Save to Firebase Firestore Cloud
     try {
@@ -1325,30 +1395,51 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
-  // Re-fetch all shared materials from Firestore manually (for recovery if network drops)
+  // Re-fetch all shared materials and forum posts from Firestore manually (for recovery if network drops)
   const retryCloudSync = async () => {
     setCloudSyncStatus('syncing');
     setCloudSyncError(null);
     try {
-      const cloudList = await fetchMaterialsFromCloud();
+      const [cloudList, cloudPosts] = await Promise.all([
+        fetchMaterialsFromCloud(),
+        fetchPostsFromCloud(),
+      ]);
       setMaterials(cloudList);
-      setCloudSyncStatus('connected');
       if (isHydratedRef.current) {
         setPersistentItem(STORAGE_KEYS.MATERIALS, cloudList);
       }
+
+      setPosts((prev) => {
+        const map = new Map<string, ForumPost>();
+        prev.forEach((p) => {
+          if (p?.id) map.set(p.id, p);
+        });
+        cloudPosts.forEach((p) => {
+          if (p?.id) map.set(p.id, mergeForumPost(map.get(p.id), p));
+        });
+        const merged = Array.from(map.values()).sort(
+          (a, b) => (b.createdAtMs || Date.parse(b.createdAt) || 0) - (a.createdAtMs || Date.parse(a.createdAt) || 0)
+        );
+        if (isHydratedRef.current) {
+          setPersistentItem(STORAGE_KEYS.POSTS, merged);
+        }
+        return merged;
+      });
+
+      setCloudSyncStatus('connected');
     } catch (e: any) {
       setCloudSyncStatus('error');
       setCloudSyncError(e?.message || 'Firestore再同期に失敗しました');
     }
   };
 
-  // Forum
-  const addPost = (subjectTag: string, title: string, content: string) => {
+  // Forum (Cloud-first Firestore + IndexedDB + Server JSON)
+  const addPost = async (subjectTag: string, title: string, content: string) => {
     if (!currentStudentNum) return;
     const author = currentStudent?.nickname || `出席番号${currentStudentNum}番`;
     const nowMs = Date.now();
     const newPost: ForumPost = {
-      id: `post-user-${nowMs}`,
+      id: `post-user-${nowMs}-${Math.random().toString(36).slice(2, 6)}`,
       studentNumber: currentStudentNum,
       authorNickname: author,
       subjectTag,
@@ -1359,52 +1450,81 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       reactions: { like: 0, heart: 0, lightbulb: 0 },
       comments: [],
     };
+
     setPosts((prev) => {
-      const next = [newPost, ...prev];
+      const next = [newPost, ...prev.filter((p) => p.id !== newPost.id)];
       setPersistentItem(STORAGE_KEYS.POSTS, next);
       return next;
     });
-    savePostToCloud(newPost).catch(() => {});
+
+    setCloudSyncStatus('syncing');
+    try {
+      await savePostToCloud(newPost);
+      setCloudSyncStatus('connected');
+      setCloudSyncError(null);
+    } catch (e: any) {
+      const msg = e?.message || '掲示板投稿のクラウド保存に失敗しました';
+      setCloudSyncStatus('error');
+      setCloudSyncError(msg);
+      throw new Error(msg);
+    }
   };
 
-  const addComment = (postId: string, content: string) => {
+  const addComment = async (postId: string, content: string) => {
     if (!currentStudentNum || !content.trim()) return;
+    const target = posts.find((p) => p.id === postId);
+    if (!target) return;
+
     const author = currentStudent?.nickname || `出席番号${currentStudentNum}番`;
     const newComment = {
-      id: `c-${Date.now()}`,
+      id: `c-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       studentNumber: currentStudentNum,
       authorNickname: author,
       content: content.trim(),
       createdAt: new Date().toISOString(),
     };
+    const updatedPost: ForumPost = {
+      ...target,
+      comments: [...(target.comments || []), newComment],
+    };
+
     setPosts((prev) => {
-      const next = prev.map((p) => {
-        if (p.id !== postId) return p;
-        const updated = { ...p, comments: [...p.comments, newComment] };
-        savePostToCloud(updated).catch(() => {});
-        return updated;
-      });
+      const next = prev.map((p) => (p.id === postId ? updatedPost : p));
       setPersistentItem(STORAGE_KEYS.POSTS, next);
       return next;
     });
+
+    try {
+      await savePostToCloud(updatedPost);
+      setCloudSyncStatus('connected');
+      setCloudSyncError(null);
+    } catch (e: any) {
+      const msg = e?.message || '返信のクラウド保存に失敗しました';
+      setCloudSyncStatus('error');
+      setCloudSyncError(msg);
+    }
   };
 
   const toggleReaction = (postId: string, reactionType: 'like' | 'heart' | 'lightbulb') => {
+    const target = posts.find((p) => p.id === postId);
+    if (!target) return;
+
+    const updatedPost: ForumPost = {
+      ...target,
+      reactions: {
+        ...target.reactions,
+        [reactionType]: (target.reactions?.[reactionType] || 0) + 1,
+      },
+    };
+
     setPosts((prev) => {
-      const next = prev.map((p) => {
-        if (p.id !== postId) return p;
-        const updated = {
-          ...p,
-          reactions: {
-            ...p.reactions,
-            [reactionType]: p.reactions[reactionType] + 1,
-          },
-        };
-        savePostToCloud(updated).catch(() => {});
-        return updated;
-      });
+      const next = prev.map((p) => (p.id === postId ? updatedPost : p));
       setPersistentItem(STORAGE_KEYS.POSTS, next);
       return next;
+    });
+
+    savePostToCloud(updatedPost).catch((e) => {
+      console.warn('Reaction cloud sync warning:', e);
     });
   };
 
@@ -1553,6 +1673,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             return merged;
           });
         }
+        if (Array.isArray(serverData.posts)) {
+          setPosts((prev) => {
+            const map = new Map<string, ForumPost>();
+            prev.forEach((p) => { if (p?.id) map.set(p.id, p); });
+            serverData.posts.forEach((p: ForumPost) => {
+              if (p?.id) {
+                const mergedPost = mergeForumPost(map.get(p.id), p);
+                map.set(p.id, mergedPost);
+                savePostToCloud(mergedPost).catch(() => {});
+              }
+            });
+            const merged = Array.from(map.values()).sort(
+              (a, b) => (b.createdAtMs || Date.parse(b.createdAt) || 0) - (a.createdAtMs || Date.parse(a.createdAt) || 0)
+            );
+            setPersistentItem(STORAGE_KEYS.POSTS, merged);
+            return merged;
+          });
+        }
       }
     } catch (e) {
       console.warn('Manual sync notice:', e);
@@ -1562,9 +1700,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Export full JSON backup file (protects user data indefinitely)
   const exportBackupJson = () => {
     const backupData = {
-      version: '1-8-site-backup-v2',
+      version: '1-8-site-backup-v3',
       exportedAt: new Date().toISOString(),
       materials,
+      studentPredictions,
+      periodicTests,
       quizzes,
       testRecords,
       posts,
@@ -1599,6 +1739,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           parsed.materials.forEach((m: StudyMaterial) => {
             if (m && m.id) {
               map.set(m.id, m);
+              saveMaterialToCloud(m).catch(() => {});
               count += 1;
             }
           });
@@ -1608,9 +1749,67 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         });
       }
 
+      if (Array.isArray(parsed.posts)) {
+        setPosts((prev) => {
+          const map = new Map<string, ForumPost>();
+          prev.forEach((p) => { if (p?.id) map.set(p.id, p); });
+          parsed.posts.forEach((p: ForumPost) => {
+            if (p && p.id && p.title) {
+              const mergedPost = mergeForumPost(map.get(p.id), p);
+              map.set(p.id, mergedPost);
+              savePostToCloud(mergedPost).catch(() => {});
+              count += 1;
+            }
+          });
+          const merged = Array.from(map.values()).sort(
+            (a, b) => (b.createdAtMs || Date.parse(b.createdAt) || 0) - (a.createdAtMs || Date.parse(a.createdAt) || 0)
+          );
+          setPersistentItem(STORAGE_KEYS.POSTS, merged);
+          return merged;
+        });
+      }
+
+      if (Array.isArray(parsed.studentPredictions)) {
+        setStudentPredictions((prev) => {
+          const map = new Map<string, StudentPrediction>();
+          prev.forEach((p) => { if (p?.id) map.set(p.id, p); });
+          parsed.studentPredictions.forEach((p: StudentPrediction) => {
+            if (p && p.id) {
+              map.set(p.id, p);
+              saveStudentPredictionToCloud(p).catch(() => {});
+              count += 1;
+            }
+          });
+          const merged = Array.from(map.values());
+          setPersistentItem('classhub_student_predictions', merged);
+          return merged;
+        });
+      }
+
+      if (Array.isArray(parsed.periodicTests)) {
+        setPeriodicTests((prev) => {
+          const map = new Map<string, PeriodicTestSchedule>();
+          prev.forEach((p) => { if (p?.id) map.set(p.id, p); });
+          parsed.periodicTests.forEach((p: PeriodicTestSchedule) => {
+            if (p && p.id && p.title) {
+              map.set(p.id, p);
+              savePeriodicTestToCloud(p).catch(() => {});
+            }
+          });
+          const merged = Array.from(map.values()).sort((a, b) =>
+            (a.date || '').localeCompare(b.date || '')
+          );
+          setPersistentItem(STORAGE_KEYS.PERIODIC_TESTS, merged);
+          return merged;
+        });
+      }
+
       if (Array.isArray(parsed.quizzes) && parsed.quizzes.length > 0) {
         setQuizzes(parsed.quizzes);
         setPersistentItem(STORAGE_KEYS.QUIZZES, parsed.quizzes);
+        parsed.quizzes.forEach((q: WeeklyQuiz) => {
+          if (q?.id) saveQuizToCloud(q).catch(() => {});
+        });
       }
 
       // Sync to server storage if backend exists

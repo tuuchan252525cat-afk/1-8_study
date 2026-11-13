@@ -10,10 +10,21 @@ import {
   Plus,
   MessageCircle,
   X,
+  RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 
 export const ForumView: React.FC = () => {
-  const { posts, addPost, addComment, toggleReaction, allSubjects, students } = useApp();
+  const {
+    posts,
+    addPost,
+    addComment,
+    toggleReaction,
+    allSubjects,
+    students,
+    cloudSyncError,
+    retryCloudSync,
+  } = useApp();
 
   const initialLastSeenRef = useRef<number>(getLastSeenAt('forum'));
   useEffect(() => {
@@ -25,6 +36,9 @@ export const ForumView: React.FC = () => {
   const [newTitle, setNewTitle] = useState('');
   const [newTag, setNewTag] = useState('数学');
   const [newContent, setNewContent] = useState('');
+  const [isSubmittingPost, setIsSubmittingPost] = useState(false);
+  const [postError, setPostError] = useState<string | null>(null);
+  const [isRetryingSync, setIsRetryingSync] = useState(false);
   const [expandedComments, setExpandedComments] = useState<Record<string, boolean>>({});
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
 
@@ -38,23 +52,40 @@ export const ForumView: React.FC = () => {
   const filteredPosts =
     activeTag === 'すべて' ? posts : posts.filter((p) => p.subjectTag === activeTag);
 
-  const handlePostSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTitle.trim() || !newContent.trim()) return;
-
-    addPost(newTag, newTitle.trim(), newContent.trim());
-    setIsNewPostOpen(false);
-    setNewTitle('');
-    setNewContent('');
+  const handleManualSync = async () => {
+    setIsRetryingSync(true);
+    try {
+      await retryCloudSync();
+    } finally {
+      setIsRetryingSync(false);
+    }
   };
 
-  const handleCommentSubmit = (postId: string) => {
+  const handlePostSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTitle.trim() || !newContent.trim() || isSubmittingPost) return;
+
+    setIsSubmittingPost(true);
+    setPostError(null);
+    try {
+      await addPost(newTag, newTitle.trim(), newContent.trim());
+      setIsNewPostOpen(false);
+      setNewTitle('');
+      setNewContent('');
+    } catch (err: any) {
+      setPostError(err?.message || '投稿のクラウド保存に失敗しました');
+    } finally {
+      setIsSubmittingPost(false);
+    }
+  };
+
+  const handleCommentSubmit = async (postId: string) => {
     const text = commentInputs[postId]?.trim();
     if (!text) return;
 
-    addComment(postId, text);
     setCommentInputs((prev) => ({ ...prev, [postId]: '' }));
     setExpandedComments((prev) => ({ ...prev, [postId]: true }));
+    await addComment(postId, text);
   };
 
   const toggleCommentsView = (postId: string) => {
@@ -68,6 +99,24 @@ export const ForumView: React.FC = () => {
     <div className="space-y-6">
       {/* Header and Tag Filters */}
       <div className="bg-white rounded-3xl p-5 sm:p-7 border border-stone-200/90 shadow-xs space-y-4">
+        {cloudSyncError && (
+          <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-rose-900">
+            <div className="flex items-start sm:items-center gap-2 font-bold">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5 sm:mt-0" />
+              <span>{cloudSyncError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleManualSync}
+              disabled={isRetryingSync}
+              className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-50 self-end sm:self-auto"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRetryingSync ? 'animate-spin' : ''}`} />
+              <span>再同期</span>
+            </button>
+          </div>
+        )}
+
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-stone-100">
           <div>
             <div className="text-[10px] font-black text-[#1c603a] uppercase tracking-wider mb-0.5">
@@ -75,17 +124,33 @@ export const ForumView: React.FC = () => {
             </div>
             <h2 className="text-lg font-black text-slate-900">クラス学習掲示板</h2>
             <p className="text-xs text-stone-500 mt-0.5 font-medium">
-              勉強の質問・解法の疑問・自習の連絡を気楽に相談できるクラス専用スレッド
+              投稿・返信はクラウド（Firestore）に自動保存され、アプリ更新後も消去されません。
             </p>
           </div>
 
-          <button
-            onClick={() => setIsNewPostOpen(true)}
-            className="flex items-center gap-1.5 px-5 py-2.5 rounded-2xl bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black shadow-xs transition-all self-start sm:self-auto cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            <span>スレッドを立てる</span>
-          </button>
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={handleManualSync}
+              disabled={isRetryingSync}
+              className="flex items-center gap-1.5 px-3 py-2.5 rounded-2xl bg-stone-100 hover:bg-stone-200 text-slate-700 text-xs font-black transition-all cursor-pointer border border-stone-200"
+              title="クラウドから最新の投稿を再取得"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRetryingSync ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">再同期</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPostError(null);
+                setIsNewPostOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-5 py-2.5 rounded-2xl bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black shadow-xs transition-all cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>スレッドを立てる</span>
+            </button>
+          </div>
         </div>
 
         {/* Tags (Modeled on 39204_0_b6de3a0e.jpg filter buttons) */}
@@ -290,6 +355,13 @@ export const ForumView: React.FC = () => {
             </div>
 
             <form onSubmit={handlePostSubmit} className="space-y-4">
+              {postError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-2xl flex items-start gap-2 text-xs text-rose-800 font-bold">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{postError}</span>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-black text-slate-700 mb-1.5">ジャンル・教科</label>
                 <select
@@ -341,9 +413,10 @@ export const ForumView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2.5 rounded-2xl bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black shadow-xs cursor-pointer"
+                  disabled={isSubmittingPost}
+                  className="px-6 py-2.5 rounded-2xl bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black shadow-xs cursor-pointer disabled:opacity-50"
                 >
-                  投稿する
+                  {isSubmittingPost ? 'クラウド保存中...' : '投稿する'}
                 </button>
               </div>
             </form>

@@ -123,9 +123,6 @@ export const ForumView: React.FC = () => {
               ◎ 1-8 SITE COMMUNITY
             </div>
             <h2 className="text-lg font-black text-slate-900">クラス学習掲示板</h2>
-            <p className="text-xs text-stone-500 mt-0.5 font-medium">
-              投稿・返信はクラウド（Firestore）に自動保存され、アプリ更新後も消去されません。
-            </p>
           </div>
 
           <div className="flex items-center gap-2 self-start sm:self-auto">

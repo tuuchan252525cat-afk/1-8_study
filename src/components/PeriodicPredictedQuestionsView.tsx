@@ -4,6 +4,8 @@ import { WeeklyQuiz, QuizQuestion, AiAnalysisResult, MaterialSubject, StudentPre
 import { isStaticDeployment } from '../utils/navigation';
 import { getLastSeenAt, markSectionSeen, isItemUnseenNew, countUnseenNew } from '../utils/newBadge';
 import { FullscreenMaterialModal } from './FullscreenMaterialModal';
+import { PdfCanvasViewer } from './PdfCanvasViewer';
+import { usePdfBlobUrl } from '../utils/pdfUtils';
 import {
   Sparkles,
   BookOpen,
@@ -29,6 +31,7 @@ import {
   Printer,
   Maximize2,
   Download,
+  ExternalLink,
   Trash2,
   AlertTriangle,
   RefreshCw,
@@ -587,6 +590,7 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
       selectedPrediction.imageUrl?.toLowerCase().endsWith('.pdf'));
 
   const activePredPdfSource = selectedPrediction?.pdfUrl || selectedPrediction?.imageUrl;
+  const predPdfBlobUrl = usePdfBlobUrl(isSelectedPredPdf ? activePredPdfSource : undefined);
 
   const renderPredPreviewContent = (isMobileModal: boolean = false) => {
     if (!selectedPrediction) return null;
@@ -673,7 +677,7 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
               </span>
             </div>
 
-            {/* PDF Viewer */}
+            {/* PDF Viewer (PDF.js Canvas + Blob URL) */}
             {isSelectedPredPdf && activePredPdfSource ? (
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-stone-100 rounded-2xl border border-stone-200">
@@ -684,15 +688,28 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
                       ({selectedPrediction.fileSize})
                     </span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <a
-                      href={activePredPdfSource}
-                      download={`${selectedPrediction.title}.pdf`}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white hover:bg-stone-200 border border-stone-300 text-slate-800 font-bold text-xs shadow-2xs"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>保存</span>
-                    </a>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {predPdfBlobUrl && (
+                      <>
+                        <a
+                          href={predPdfBlobUrl}
+                          download={`${selectedPrediction.title}.pdf`}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white hover:bg-stone-200 border border-stone-300 text-slate-800 font-bold text-xs shadow-2xs"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>保存</span>
+                        </a>
+                        <a
+                          href={predPdfBlobUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white hover:bg-stone-200 border border-stone-300 text-slate-800 font-bold text-xs shadow-2xs"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>開く</span>
+                        </a>
+                      </>
+                    )}
                     <button
                       type="button"
                       onClick={() => setIsFullscreenPreview(true)}
@@ -705,14 +722,15 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
                 </div>
 
                 <div
-                  className={`border border-stone-200 rounded-3xl overflow-auto pinch-zoom-surface shadow-xs bg-stone-50 ${
-                    isMobileModal ? 'h-[420px]' : 'h-[550px] sm:h-[650px]'
+                  className={`border border-stone-200 rounded-3xl overflow-y-auto overflow-x-hidden pinch-zoom-surface shadow-xs bg-stone-50 ${
+                    isMobileModal ? 'max-h-[65dvh] min-h-[280px]' : 'max-h-[650px] min-h-[360px]'
                   }`}
                 >
-                  <iframe
-                    src={activePredPdfSource}
-                    className="w-full h-full border-0 touch-auto"
+                  <PdfCanvasViewer
+                    source={activePredPdfSource}
                     title={selectedPrediction.title}
+                    blobUrl={predPdfBlobUrl}
+                    fitContainer
                   />
                 </div>
               </div>
@@ -1485,7 +1503,10 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
                       >
                         <div className="flex items-start gap-3.5 min-w-0 flex-1">
                           <div className="w-12 h-12 rounded-2xl bg-stone-100 border border-stone-200 overflow-hidden flex items-center justify-center shrink-0">
-                            {pred.imageUrl && !pred.imageUrl.startsWith('data:application/pdf') ? (
+                            {pred.fileType !== 'pdf' &&
+                            pred.imageUrl &&
+                            !pred.imageUrl.startsWith('data:application/pdf') &&
+                            !pred.imageUrl.toLowerCase().endsWith('.pdf') ? (
                               <img
                                 src={pred.imageUrl}
                                 alt={pred.title}

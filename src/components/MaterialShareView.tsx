@@ -3,6 +3,8 @@ import { useApp } from '../context/AppContext';
 import { MaterialSubject, StudyMaterial } from '../types';
 import { getLastSeenAt, markSectionSeen, isItemUnseenNew } from '../utils/newBadge';
 import { FullscreenMaterialModal } from './FullscreenMaterialModal';
+import { PdfCanvasViewer } from './PdfCanvasViewer';
+import { usePdfBlobUrl } from '../utils/pdfUtils';
 import {
   FileText,
   Image as ImageIcon,
@@ -15,6 +17,7 @@ import {
   Upload,
   BookOpen,
   Download,
+  ExternalLink,
   Trash2,
   AlertTriangle,
   RefreshCw,
@@ -284,6 +287,7 @@ export const MaterialShareView: React.FC = () => {
       selectedMaterial.imageUrl?.toLowerCase().endsWith('.pdf'));
 
   const activePdfSource = selectedMaterial?.pdfUrl || selectedMaterial?.imageUrl;
+  const pdfBlobUrl = usePdfBlobUrl(isSelectedPdf ? activePdfSource : undefined);
 
   /**
    * Reusable preview renderer for both Desktop right column & Mobile slide-up sheet
@@ -362,7 +366,7 @@ export const MaterialShareView: React.FC = () => {
               </span>
             </div>
 
-            {/* PDF Viewer */}
+            {/* PDF Viewer (PDF.js Canvas + Blob URL) */}
             {isSelectedPdf && activePdfSource ? (
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-stone-100 rounded-2xl border border-stone-200">
@@ -373,15 +377,28 @@ export const MaterialShareView: React.FC = () => {
                       ({selectedMaterial.fileSize})
                     </span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <a
-                      href={activePdfSource}
-                      download={`${selectedMaterial.title}.pdf`}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white hover:bg-stone-200 border border-stone-300 text-slate-800 font-bold text-xs shadow-2xs"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>保存</span>
-                    </a>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {pdfBlobUrl && (
+                      <>
+                        <a
+                          href={pdfBlobUrl}
+                          download={`${selectedMaterial.title}.pdf`}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white hover:bg-stone-200 border border-stone-300 text-slate-800 font-bold text-xs shadow-2xs"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>保存</span>
+                        </a>
+                        <a
+                          href={pdfBlobUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white hover:bg-stone-200 border border-stone-300 text-slate-800 font-bold text-xs shadow-2xs"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>開く</span>
+                        </a>
+                      </>
+                    )}
                     <button
                       type="button"
                       onClick={() => setIsFullscreenPreview(true)}
@@ -394,14 +411,15 @@ export const MaterialShareView: React.FC = () => {
                 </div>
 
                 <div
-                  className={`border border-stone-200 rounded-3xl overflow-auto pinch-zoom-surface shadow-xs bg-stone-50 ${
-                    isMobileModal ? 'h-[420px]' : 'h-[600px] sm:h-[700px]'
+                  className={`border border-stone-200 rounded-3xl overflow-y-auto overflow-x-hidden pinch-zoom-surface shadow-xs bg-stone-50 ${
+                    isMobileModal ? 'max-h-[65dvh] min-h-[280px]' : 'max-h-[700px] min-h-[360px]'
                   }`}
                 >
-                  <iframe
-                    src={activePdfSource}
-                    className="w-full h-full border-0 touch-auto"
+                  <PdfCanvasViewer
+                    source={activePdfSource}
                     title={selectedMaterial.title}
+                    blobUrl={pdfBlobUrl}
+                    fitContainer
                   />
                 </div>
               </div>
@@ -733,7 +751,10 @@ export const MaterialShareView: React.FC = () => {
                     <div className="flex items-start gap-3.5 min-w-0 flex-1">
                       {/* Left Thumbnail / Icon badge */}
                       <div className="w-12 h-12 rounded-2xl bg-stone-100 border border-stone-200 overflow-hidden flex items-center justify-center shrink-0">
-                        {mat.imageUrl && !mat.imageUrl.startsWith('data:application/pdf') ? (
+                        {mat.fileType !== 'pdf' &&
+                        mat.imageUrl &&
+                        !mat.imageUrl.startsWith('data:application/pdf') &&
+                        !mat.imageUrl.toLowerCase().endsWith('.pdf') ? (
                           <img
                             src={mat.imageUrl}
                             alt={mat.title}

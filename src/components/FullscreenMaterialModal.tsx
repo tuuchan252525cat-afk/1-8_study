@@ -10,6 +10,8 @@ import {
   ZoomIn,
 } from 'lucide-react';
 import { StudyMaterial } from '../types';
+import { PdfCanvasViewer } from './PdfCanvasViewer';
+import { usePdfBlobUrl } from '../utils/pdfUtils';
 
 interface FullscreenMaterialModalProps {
   isOpen: boolean;
@@ -28,7 +30,6 @@ export const FullscreenMaterialModal: React.FC<FullscreenMaterialModalProps> = (
   const [imgError, setImgError] = useState<boolean>(false);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const [viewportSize, setViewportSize] = useState<{ w: number; h: number } | null>(null);
-  const [blobPdfUrl, setBlobPdfUrl] = useState<string | null>(null);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -52,50 +53,7 @@ export const FullscreenMaterialModal: React.FC<FullscreenMaterialModalProps> = (
     }
   }, [isOpen, material?.id]);
 
-  // Convert Base64 PDF data URLs to Blob URLs so browsers render them reliably without data-URI length/sandbox blocks
-  useEffect(() => {
-    if (!isOpen || !isPdf || !rawPdfSource) {
-      setBlobPdfUrl(null);
-      return;
-    }
-
-    if (!rawPdfSource.startsWith('data:application/pdf')) {
-      setBlobPdfUrl(rawPdfSource);
-      return;
-    }
-
-    let createdUrl: string | null = null;
-    try {
-      const commaIndex = rawPdfSource.indexOf(',');
-      if (commaIndex !== -1) {
-        const meta = rawPdfSource.slice(0, commaIndex);
-        const dataPart = rawPdfSource.slice(commaIndex + 1);
-        if (meta.includes(';base64')) {
-          const binaryString = atob(dataPart);
-          const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-          }
-          const blob = new Blob([bytes], { type: 'application/pdf' });
-          createdUrl = URL.createObjectURL(blob);
-          setBlobPdfUrl(createdUrl);
-        } else {
-          setBlobPdfUrl(rawPdfSource);
-        }
-      } else {
-        setBlobPdfUrl(rawPdfSource);
-      }
-    } catch (err) {
-      console.error('PDF Blob URL conversion failed, falling back to raw source:', err);
-      setBlobPdfUrl(rawPdfSource);
-    }
-
-    return () => {
-      if (createdUrl) {
-        URL.revokeObjectURL(createdUrl);
-      }
-    };
-  }, [isOpen, isPdf, rawPdfSource]);
+  const blobPdfUrl = usePdfBlobUrl(isOpen && isPdf ? rawPdfSource : undefined);
 
   // Track scrollable viewport dimensions for responsive zoom calculation
   useEffect(() => {
@@ -172,14 +130,6 @@ export const FullscreenMaterialModal: React.FC<FullscreenMaterialModalProps> = (
     };
   }, [naturalSize, viewportSize, zoomPercent]);
 
-  const pdfDimensions = useMemo(() => {
-    if (!viewportSize) return null;
-    return {
-      width: Math.max(280, Math.round(viewportSize.w * (zoomPercent / 100))),
-      height: Math.max(360, Math.round(viewportSize.h * (zoomPercent / 100))),
-    };
-  }, [viewportSize, zoomPercent]);
-
   if (!isOpen || !material) return null;
 
   const canZoomOut = zoomPercent > ZOOM_STEPS[0];
@@ -207,7 +157,7 @@ export const FullscreenMaterialModal: React.FC<FullscreenMaterialModalProps> = (
     setZoomPercent((prev) => (prev === 100 ? 200 : 100));
   };
 
-  const downloadHref = isPdf ? (blobPdfUrl || rawPdfSource) : imageSource;
+  const downloadHref = isPdf ? blobPdfUrl : imageSource;
   const downloadFilename = isPdf ? `${material.title}.pdf` : material.title;
 
   return (
@@ -315,19 +265,20 @@ export const FullscreenMaterialModal: React.FC<FullscreenMaterialModalProps> = (
         ref={scrollContainerRef}
         className="flex-1 min-h-0 overflow-auto overscroll-contain pinch-zoom-surface flex p-2 sm:p-4"
       >
-        {isPdf && (blobPdfUrl || rawPdfSource) ? (
-          <div className="m-auto flex flex-col items-center justify-center gap-3 w-fit h-fit">
-            <iframe
-              src={blobPdfUrl || rawPdfSource}
-              title={material.title}
-              width={pdfDimensions?.width}
-              height={pdfDimensions?.height}
-              className={`border-0 rounded-xl bg-white shadow-2xl touch-auto max-w-none shrink-0 ${
-                pdfDimensions ? '' : 'w-[94vw] h-[78dvh]'
-              }`}
-            />
-            <div className="flex items-center justify-center gap-3 text-[11px] font-bold text-stone-400 pb-2">
-              <span>表示されない端末では右上の「保存」からPDFを開けます</span>
+        {isPdf && rawPdfSource ? (
+          <div className="w-full my-auto flex flex-col items-center gap-3 min-w-0">
+            <div className="w-full max-w-4xl">
+              <PdfCanvasViewer
+                source={rawPdfSource}
+                title={material.title}
+                blobUrl={blobPdfUrl}
+                zoomPercent={zoomPercent}
+                fitContainer={zoomPercent === 100}
+                darkSurface={true}
+              />
+            </div>
+            <div className="flex items-center justify-center gap-3 text-[11px] font-bold text-stone-400 pb-2 text-center">
+              <span>ピンチアウトや右上のボタンで拡大・縮小できます</span>
             </div>
           </div>
         ) : imgError ? (

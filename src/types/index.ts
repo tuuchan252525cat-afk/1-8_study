@@ -174,6 +174,10 @@ export interface StudyMaterial {
   contentPreview?: string;
   imageUrl?: string;
   pdfUrl?: string;
+  isChunked?: boolean;
+  totalChunks?: number;
+  chunkedField?: 'imageUrl' | 'pdfUrl';
+  mimeType?: string;
   documentSections?: MaterialDocumentSection[];
 }
 

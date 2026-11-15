@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { StudyMaterial } from '../types';
 import { PdfCanvasViewer } from './PdfCanvasViewer';
-import { usePdfBlobUrl } from '../utils/pdfUtils';
+import { usePdfBlobUrl, downloadUrlAsFile } from '../utils/pdfUtils';
 
 interface FullscreenMaterialModalProps {
   isOpen: boolean;
@@ -236,15 +236,15 @@ export const FullscreenMaterialModal: React.FC<FullscreenMaterialModalProps> = (
 
           <div className="flex items-center gap-2">
             {downloadHref && (
-              <a
-                href={downloadHref}
-                download={downloadFilename}
-                className="min-h-[44px] px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
+              <button
+                type="button"
+                onClick={() => downloadUrlAsFile(downloadHref, downloadFilename)}
+                className="min-h-[44px] px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
                 title="ファイルを保存"
               >
                 <Download className="w-4 h-4" />
                 <span className="hidden sm:inline">保存</span>
-              </a>
+              </button>
             )}
 
             <button
@@ -294,14 +294,14 @@ export const FullscreenMaterialModal: React.FC<FullscreenMaterialModalProps> = (
             </p>
             <div className="flex items-center justify-center gap-2.5 pt-1">
               {downloadHref && (
-                <a
-                  href={downloadHref}
-                  download={downloadFilename}
-                  className="min-h-[44px] px-4 py-2 rounded-xl bg-[#1c603a] hover:bg-[#237748] text-white text-xs font-black flex items-center gap-1.5"
+                <button
+                  type="button"
+                  onClick={() => downloadUrlAsFile(downloadHref, downloadFilename)}
+                  className="min-h-[44px] px-4 py-2 rounded-xl bg-[#1c603a] hover:bg-[#237748] text-white text-xs font-black flex items-center gap-1.5 cursor-pointer"
                 >
                   <Download className="w-4 h-4" />
                   <span>ファイルを保存</span>
-                </a>
+                </button>
               )}
               <button
                 type="button"

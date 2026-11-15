@@ -14,12 +14,13 @@ export default defineConfig(() => {
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(import.meta.dirname, '.'),
       },
     },
     server: {
-      // HMR is disabled in AI Studio to prevent WebSocket closed errors through Cloud Run proxy
+      // HMR and WS are disabled in AI Studio to prevent WebSocket port/proxy conflicts
       hmr: false,
+      ws: false as const,
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },

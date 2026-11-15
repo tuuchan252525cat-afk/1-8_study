@@ -17,9 +17,23 @@
         "contentPreview": { "type": "string", "maxLength": 2000 },
         "imageUrl": { "type": "string", "maxLength": 2000000 },
         "pdfUrl": { "type": "string", "maxLength": 2000000 },
+        "isChunked": { "type": "boolean" },
+        "totalChunks": { "type": "number" },
+        "chunkedField": { "type": "string", "enum": ["imageUrl", "pdfUrl"] },
+        "mimeType": { "type": "string", "maxLength": 64 },
         "documentSections": { "type": "array" }
       },
       "required": ["id", "title", "subject", "fileType", "createdAt"]
+    },
+    "MaterialChunk": {
+      "title": "MaterialChunk",
+      "description": "Ordered 700,000-character Base64 chunk for files up to 5MB stored in Firestore free tier",
+      "type": "object",
+      "properties": {
+        "index": { "type": "number" },
+        "data": { "type": "string", "maxLength": 750000 }
+      },
+      "required": ["index", "data"]
     },
     "WeeklyQuiz": {
       "title": "WeeklyQuiz",
@@ -85,6 +99,18 @@
     "/materials/{materialId}": {
       "schema": "StudyMaterial",
       "description": "Shared study materials and test papers across devices"
+    },
+    "/materials/{materialId}/chunks/{chunkId}": {
+      "schema": "MaterialChunk",
+      "description": "Chunked Base64 file segments for materials over 700KB"
+    },
+    "/student_predictions/{predictionId}": {
+      "schema": "StudyMaterial",
+      "description": "Student-created predicted test papers"
+    },
+    "/student_predictions/{predictionId}/chunks/{chunkId}": {
+      "schema": "MaterialChunk",
+      "description": "Chunked Base64 file segments for student predictions over 700KB"
     },
     "/quizzes/{quizId}": {
       "schema": "WeeklyQuiz",

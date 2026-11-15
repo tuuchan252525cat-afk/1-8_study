@@ -34,9 +34,8 @@ export function decodeDataUrlToBytes(dataUrl: string): Uint8Array | null {
 
 /**
  * React hook that converts a Base64 PDF Data URL into a memory-managed Blob URL
- * (`blob:...`) so mobile browsers (iOS Safari / Android Chrome) can save or open
- * PDFs without being blocked by `data:` URI security restrictions.
- * Automatically revokes the previous Blob URL on change or unmount.
+ * (`blob:...`) while passing through external `https://` URLs unchanged.
+ * Automatically revokes created Blob URLs on change or unmount.
  */
 export function usePdfBlobUrl(source?: string | null): string | undefined {
   const [blobUrl, setBlobUrl] = useState<string | undefined>(undefined);
@@ -68,4 +67,50 @@ export function usePdfBlobUrl(source?: string | null): string | undefined {
   }, [source]);
 
   return blobUrl;
+}
+
+/**
+ * Reliably downloads both `blob:`/`data:` URLs and cross-origin `https://` URLs
+ * (such as Supabase Storage public URLs) with a clean filename.
+ */
+export async function downloadUrlAsFile(url: string, filename: string): Promise<void> {
+  if (!url) return;
+
+  const triggerDownload = (href: string) => {
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = filename;
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  if (url.startsWith('blob:') || url.startsWith('data:')) {
+    triggerDownload(url);
+    return;
+  }
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      triggerDownload(objectUrl);
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+    }
+  } catch {
+    // Fallback if cross-origin fetch is blocked: open in new tab without window.open popup blocking issues
+    const link = document.createElement('a');
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
 }

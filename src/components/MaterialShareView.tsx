@@ -4,7 +4,17 @@ import { MaterialSubject, StudyMaterial } from '../types';
 import { getLastSeenAt, markSectionSeen, isItemUnseenNew } from '../utils/newBadge';
 import { FullscreenMaterialModal } from './FullscreenMaterialModal';
 import { PdfCanvasViewer } from './PdfCanvasViewer';
-import { usePdfBlobUrl } from '../utils/pdfUtils';
+import { usePdfBlobUrl, downloadUrlAsFile } from '../utils/pdfUtils';
+import {
+  prepareFileForFirestore,
+  formatFileSizeLabel,
+  isPdfFile,
+  MAX_UPLOAD_FILE_BYTES,
+} from '../utils/fileProcessing';
+import {
+  resolveMaterialFileData,
+  getCachedReassembledFileData,
+} from '../utils/firebase';
 import {
   FileText,
   Image as ImageIcon,
@@ -27,6 +37,7 @@ import {
   ChevronRight,
   Eye,
   ZoomIn,
+  Loader2,
 } from 'lucide-react';
 
 export const MaterialShareView: React.FC = () => {
@@ -65,6 +76,7 @@ export const MaterialShareView: React.FC = () => {
   const [newType, setNewType] = useState<'pdf' | 'image' | 'summary'>('image');
   const [newDesc, setNewDesc] = useState('');
   const [uploadedFilePreview, setUploadedFilePreview] = useState<string>('');
+  const [selectedUploadFile, setSelectedUploadFile] = useState<File | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState<string>('');
   const [uploadedFileSize, setUploadedFileSize] = useState<string>('');
   const [newSectionTitle, setNewSectionTitle] = useState('第1章：基本のポイント');
@@ -72,6 +84,12 @@ export const MaterialShareView: React.FC = () => {
   const [newFormula, setNewFormula] = useState('');
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Chunked file reassembly state & memory map
+  const [resolvedChunkMap, setResolvedChunkMap] = useState<Record<string, string>>({});
+  const [isLoadingChunks, setIsLoadingChunks] = useState(false);
+  const [chunkLoadError, setChunkLoadError] = useState<string | null>(null);
+  const [chunkRetryTick, setChunkRetryTick] = useState(0);
 
   // Student self-check list state
   const [checkedPoints, setCheckedPoints] = useState<Record<string, boolean>>({});
@@ -125,6 +143,70 @@ export const MaterialShareView: React.FC = () => {
     setImgError(false);
   }, [selectedMaterial?.id]);
 
+  // Clean up local object URL previews on change or unmount
+  useEffect(() => {
+    return () => {
+      if (uploadedFilePreview && uploadedFilePreview.startsWith('blob:')) {
+        URL.revokeObjectURL(uploadedFilePreview);
+      }
+    };
+  }, [uploadedFilePreview]);
+
+  // Automatically fetch and reassemble Firestore subcollection chunks when viewing a >700KB material
+  useEffect(() => {
+    if (!selectedMaterial) return;
+    const direct =
+      selectedMaterial.fileType === 'pdf'
+        ? selectedMaterial.pdfUrl || selectedMaterial.imageUrl
+        : selectedMaterial.imageUrl || selectedMaterial.pdfUrl;
+    if (direct) {
+      setIsLoadingChunks(false);
+      setChunkLoadError(null);
+      return;
+    }
+
+    if (!selectedMaterial.isChunked && !selectedMaterial.totalChunks) {
+      setIsLoadingChunks(false);
+      setChunkLoadError(null);
+      return;
+    }
+
+    const existing =
+      resolvedChunkMap[selectedMaterial.id] ||
+      getCachedReassembledFileData('materials', selectedMaterial.id);
+    if (existing) {
+      if (!resolvedChunkMap[selectedMaterial.id]) {
+        setResolvedChunkMap((prev) => ({ ...prev, [selectedMaterial.id]: existing }));
+      }
+      setIsLoadingChunks(false);
+      setChunkLoadError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingChunks(true);
+    setChunkLoadError(null);
+
+    resolveMaterialFileData(selectedMaterial, 'materials')
+      .then((reassembled) => {
+        if (cancelled) return;
+        if (reassembled) {
+          setResolvedChunkMap((prev) => ({ ...prev, [selectedMaterial.id]: reassembled }));
+        }
+        setIsLoadingChunks(false);
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        console.error('Failed to load chunked material:', err);
+        setChunkLoadError(err?.message || '分割データの読み込みに失敗しました。');
+        setIsLoadingChunks(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMaterial?.id, selectedMaterial?.isChunked, selectedMaterial?.totalChunks, chunkRetryTick]);
+
   // Handle ESC key to close modals (fullscreen modal takes priority)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -148,30 +230,29 @@ export const MaterialShareView: React.FC = () => {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setUploadError(null);
-      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-      const detectedType = isPdf ? 'pdf' : 'image';
-      setNewType(detectedType);
-      setUploadedFileName(file.name);
+    if (!file) return;
 
-      const sizeInMb = (file.size / (1024 * 1024)).toFixed(2);
-      setUploadedFileSize(`${sizeInMb} MB`);
+    setUploadError(null);
 
-      if (isPdf && file.size > 800 * 1024) {
-        setUploadError(
-          `PDFサイズが大きすぎます (${sizeInMb} MB)。Firestore同期の制限(1MB)を超える可能性があるため、800KB以下のファイルを選択するか画像としてアップロードしてください。`
-        );
-      }
-
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setUploadedFilePreview(event.target.result as string);
-        }
-      };
-      reader.readAsDataURL(file);
+    if (file.size > MAX_UPLOAD_FILE_BYTES) {
+      setSelectedUploadFile(null);
+      setUploadedFilePreview('');
+      setUploadedFileName('');
+      setUploadedFileSize('');
+      setUploadError('ファイルサイズが大きすぎます（最大5MBまで）');
+      e.target.value = '';
+      return;
     }
+
+    const isPdf = isPdfFile(file);
+    const detectedType = isPdf ? 'pdf' : 'image';
+    setNewType(detectedType);
+    setSelectedUploadFile(file);
+    setUploadedFileName(file.name);
+    setUploadedFileSize(formatFileSizeLabel(file.size));
+
+    const objectUrl = URL.createObjectURL(file);
+    setUploadedFilePreview(objectUrl);
   };
 
   const handleUploadSubmit = async (e: React.FormEvent) => {
@@ -181,23 +262,26 @@ export const MaterialShareView: React.FC = () => {
     setUploadError(null);
     setIsSaving(true);
     try {
-      const isPdf =
-        newType === 'pdf' ||
-        uploadedFileName.toLowerCase().endsWith('.pdf') ||
-        uploadedFilePreview.startsWith('data:application/pdf');
+      let preparedImageUrl: string | undefined;
+      let preparedPdfUrl: string | undefined;
+      let finalType: 'pdf' | 'image' | 'summary' = newType;
+      let finalSize = uploadedFileSize || '450 KB';
+      let finalMimeType: string | undefined;
 
-      if (isPdf && uploadedFilePreview.length > 900 * 1024) {
-        throw new Error(
-          'PDFファイルの容量が大きすぎます（約' +
-            uploadedFileSize +
-            '）。Firestoreの上限（1MB）に収めるため、800KB以下のPDFを選択してください。'
-        );
+      if (selectedUploadFile) {
+        if (selectedUploadFile.size > MAX_UPLOAD_FILE_BYTES) {
+          throw new Error('ファイルサイズが大きすぎます（最大5MBまで）');
+        }
+        const prepared = await prepareFileForFirestore(selectedUploadFile);
+        finalType = prepared.fileType;
+        finalSize = prepared.fileSizeLabel;
+        finalMimeType = prepared.mimeType;
+        if (prepared.fileType === 'pdf') {
+          preparedPdfUrl = prepared.dataUrl;
+        } else {
+          preparedImageUrl = prepared.dataUrl;
+        }
       }
-
-      const finalType: 'pdf' | 'image' | 'summary' = isPdf ? 'pdf' : newType;
-      const finalSize =
-        uploadedFileSize ||
-        (finalType === 'pdf' ? '1.4 MB' : finalType === 'image' ? '1.2 MB' : '450 KB');
 
       await addMaterial({
         title: newTitle.trim(),
@@ -205,8 +289,9 @@ export const MaterialShareView: React.FC = () => {
         description: newDesc.trim() || '定期テスト問題用紙・対策プリント',
         fileType: finalType,
         fileSize: finalSize,
-        imageUrl: isPdf ? undefined : (uploadedFilePreview || undefined),
-        pdfUrl: isPdf ? (uploadedFilePreview || undefined) : undefined,
+        imageUrl: preparedImageUrl,
+        pdfUrl: preparedPdfUrl,
+        mimeType: finalMimeType,
         contentPreview: newContent.trim() || '定期考査の実物問題用紙プレビューです。',
         documentSections: [
           {
@@ -231,6 +316,7 @@ export const MaterialShareView: React.FC = () => {
         setNewDesc('');
         setNewContent('');
         setNewFormula('');
+        setSelectedUploadFile(null);
         setUploadedFilePreview('');
         setUploadedFileName('');
         setUploadedFileSize('');
@@ -278,15 +364,36 @@ export const MaterialShareView: React.FC = () => {
     setCheckedPoints((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
+  const resolvedChunkData = selectedMaterial
+    ? resolvedChunkMap[selectedMaterial.id] ||
+      getCachedReassembledFileData('materials', selectedMaterial.id)
+    : undefined;
+
+  const resolvedSelectedMaterial: StudyMaterial | undefined = selectedMaterial
+    ? {
+        ...selectedMaterial,
+        pdfUrl:
+          selectedMaterial.pdfUrl ||
+          (selectedMaterial.fileType === 'pdf' || selectedMaterial.chunkedField === 'pdfUrl'
+            ? resolvedChunkData
+            : undefined),
+        imageUrl:
+          selectedMaterial.imageUrl ||
+          (selectedMaterial.fileType !== 'pdf' && selectedMaterial.chunkedField !== 'pdfUrl'
+            ? resolvedChunkData
+            : undefined),
+      }
+    : undefined;
+
   // Determine if active material is a PDF
   const isSelectedPdf =
-    selectedMaterial &&
-    (selectedMaterial.fileType === 'pdf' ||
-      Boolean(selectedMaterial.pdfUrl) ||
-      selectedMaterial.imageUrl?.startsWith('data:application/pdf') ||
-      selectedMaterial.imageUrl?.toLowerCase().endsWith('.pdf'));
+    resolvedSelectedMaterial &&
+    (resolvedSelectedMaterial.fileType === 'pdf' ||
+      Boolean(resolvedSelectedMaterial.pdfUrl) ||
+      resolvedSelectedMaterial.imageUrl?.startsWith('data:application/pdf') ||
+      resolvedSelectedMaterial.imageUrl?.toLowerCase().endsWith('.pdf'));
 
-  const activePdfSource = selectedMaterial?.pdfUrl || selectedMaterial?.imageUrl;
+  const activePdfSource = resolvedSelectedMaterial?.pdfUrl || resolvedSelectedMaterial?.imageUrl;
   const pdfBlobUrl = usePdfBlobUrl(isSelectedPdf ? activePdfSource : undefined);
 
   /**
@@ -366,8 +473,32 @@ export const MaterialShareView: React.FC = () => {
               </span>
             </div>
 
-            {/* PDF Viewer (PDF.js Canvas + Blob URL) */}
-            {isSelectedPdf && activePdfSource ? (
+            {/* Chunked File Loading / Error States */}
+            {isLoadingChunks ? (
+              <div className="p-10 sm:p-14 text-center bg-[#fdfbf7] rounded-3xl border border-stone-200 space-y-3">
+                <Loader2 className="w-8 h-8 animate-spin text-[#1c603a] mx-auto" />
+                <div className="text-sm font-black text-slate-800">
+                  分割ファイルを読み込み中...
+                </div>
+                <p className="text-xs text-stone-500 font-medium">
+                  クラウドからデータを結合しています（全{selectedMaterial.totalChunks || ''}チャンク）
+                </p>
+              </div>
+            ) : chunkLoadError ? (
+              <div className="p-8 sm:p-10 text-center bg-rose-50 rounded-3xl border border-rose-200 space-y-3">
+                <AlertTriangle className="w-8 h-8 text-rose-500 mx-auto" />
+                <h4 className="text-sm font-black text-rose-900">データの読み込みに失敗しました</h4>
+                <p className="text-xs text-rose-700 font-medium">{chunkLoadError}</p>
+                <button
+                  type="button"
+                  onClick={() => setChunkRetryTick((t) => t + 1)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#1c603a] text-white text-xs font-black cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>再読み込み</span>
+                </button>
+              </div>
+            ) : isSelectedPdf && activePdfSource ? (
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-stone-100 rounded-2xl border border-stone-200">
                   <div className="flex items-center gap-2 text-xs font-black text-slate-800">
@@ -380,14 +511,14 @@ export const MaterialShareView: React.FC = () => {
                   <div className="flex items-center gap-2 flex-wrap">
                     {pdfBlobUrl && (
                       <>
-                        <a
-                          href={pdfBlobUrl}
-                          download={`${selectedMaterial.title}.pdf`}
-                          className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white hover:bg-stone-200 border border-stone-300 text-slate-800 font-bold text-xs shadow-2xs"
+                        <button
+                          type="button"
+                          onClick={() => downloadUrlAsFile(pdfBlobUrl, `${selectedMaterial.title}.pdf`)}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white hover:bg-stone-200 border border-stone-300 text-slate-800 font-bold text-xs shadow-2xs cursor-pointer"
                         >
                           <Download className="w-3.5 h-3.5" />
                           <span>保存</span>
-                        </a>
+                        </button>
                         <a
                           href={pdfBlobUrl}
                           target="_blank"
@@ -436,15 +567,17 @@ export const MaterialShareView: React.FC = () => {
                   ファイルがPDF形式であるか、直接表示できない画像形式（HEIC等）の可能性があります。ダウンロードするか要点テキストをご確認ください。
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
-                  {selectedMaterial.imageUrl && (
-                    <a
-                      href={selectedMaterial.imageUrl}
-                      download={selectedMaterial.title}
+                  {resolvedSelectedMaterial?.imageUrl && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        downloadUrlAsFile(resolvedSelectedMaterial.imageUrl!, selectedMaterial.title)
+                      }
                       className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black shadow-xs cursor-pointer"
                     >
                       <Download className="w-3.5 h-3.5" />
                       <span>ファイルを保存</span>
-                    </a>
+                    </button>
                   )}
                   <button
                     onClick={() => setViewMode('text')}
@@ -454,7 +587,7 @@ export const MaterialShareView: React.FC = () => {
                   </button>
                 </div>
               </div>
-            ) : selectedMaterial.imageUrl ? (
+            ) : resolvedSelectedMaterial?.imageUrl ? (
               /* Image View (Supports mobile 2-finger pinch-zoom & smooth panning) */
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2 text-[11px] font-bold text-stone-500 px-1">
@@ -473,7 +606,7 @@ export const MaterialShareView: React.FC = () => {
                 </div>
                 <div className="border border-stone-200 rounded-3xl overflow-auto pinch-zoom-surface bg-slate-900 shadow-inner p-2 sm:p-4 text-center min-h-[300px] flex items-center justify-center">
                   <img
-                    src={selectedMaterial.imageUrl}
+                    src={resolvedSelectedMaterial.imageUrl}
                     alt={selectedMaterial.title}
                     onClick={() => setIsFullscreenPreview(true)}
                     onError={() => setImgError(true)}
@@ -957,7 +1090,7 @@ export const MaterialShareView: React.FC = () => {
 
                 <div>
                   <label className="block text-xs font-black text-slate-700 mb-1.5">
-                    問題用紙・ファイル画像の選択（JPG, PNG, PDF）
+                    問題用紙・ファイル画像の選択（JPG, PNG, PDF / 最大5MB）
                   </label>
                   <input
                     type="file"
@@ -965,12 +1098,17 @@ export const MaterialShareView: React.FC = () => {
                     onChange={handleFileChange}
                     className="w-full text-xs border border-stone-300 rounded-2xl p-2.5 bg-[#fdfbf7] font-bold cursor-pointer"
                   />
+                  <p className="text-[10px] text-stone-500 font-bold mt-1">
+                    ※画像は自動で軽量化（最大1600px・JPEG圧縮）され、1MB以上のPDFもFirestore分割保存で最大5MBまで登録できます。
+                  </p>
                   {uploadedFilePreview && (
                     <div className="mt-2 p-3 bg-stone-100 rounded-2xl text-center border border-stone-200">
                       {newType === 'pdf' ? (
                         <div className="flex items-center justify-center gap-2 text-xs font-black text-rose-600 py-2">
                           <FileText className="w-5 h-5" />
-                          <span>PDFファイル選択済み: {uploadedFileName || 'ドキュメント.pdf'}</span>
+                          <span>
+                            PDF選択済み: {uploadedFileName || 'ドキュメント.pdf'} ({uploadedFileSize})
+                          </span>
                         </div>
                       ) : (
                         <img
@@ -980,7 +1118,7 @@ export const MaterialShareView: React.FC = () => {
                         />
                       )}
                       <span className="text-[10px] text-[#1c603a] font-black block mt-1">
-                        ◎ ファイルを認識しました（自動保存されます）
+                        ◎ ファイルを認識しました（登録時にFirestoreへ分割保存されます）
                       </span>
                     </div>
                   )}
@@ -1025,7 +1163,7 @@ export const MaterialShareView: React.FC = () => {
                     disabled={isSaving}
                     className="px-5 py-2.5 rounded-2xl bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black shadow-xs transition-all cursor-pointer disabled:opacity-50"
                   >
-                    {isSaving ? '保存中...' : '登録して共有する'}
+                    {isSaving ? '保存・同期中...' : '登録して共有する'}
                   </button>
                 </div>
               </form>
@@ -1033,11 +1171,11 @@ export const MaterialShareView: React.FC = () => {
           </div>
         </div>
       )}
-      {/* 5. In-App Fullscreen Material Modal (Works on Mobile & Desktop, supports Base64/URL/PDF & Pinch-Zoom) */}
+      {/* 5. In-App Fullscreen Material Modal (Works on Mobile & Desktop, supports Base64/Blob/Chunked PDF & Pinch-Zoom) */}
       <FullscreenMaterialModal
         isOpen={isFullscreenPreview}
         onClose={() => setIsFullscreenPreview(false)}
-        material={selectedMaterial}
+        material={resolvedSelectedMaterial}
       />
     </div>
   );

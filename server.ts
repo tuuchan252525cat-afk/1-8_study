@@ -30,7 +30,7 @@ app.use((req, res, next) => {
 // AI Test Analysis & Predicted Quiz Generator Endpoint
 app.post('/api/ai/analyze-test', async (req, res) => {
   try {
-    const { fileData, mimeType, textPrompt } = req.body;
+    const { fileUrl, fileData, mimeType, textPrompt } = req.body;
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
@@ -97,7 +97,37 @@ app.post('/api/ai/analyze-test', async (req, res) => {
 
     const parts: any[] = [];
 
-    if (fileData && mimeType) {
+    if (typeof fileUrl === 'string' && /^https?:\/\//i.test(fileUrl)) {
+      const remoteResp = await fetch(fileUrl, { signal: AbortSignal.timeout(20000) });
+      if (!remoteResp.ok) {
+        return res.status(400).json({
+          error: 'ファイルURLからの読み込みに失敗しました',
+          message: `ストレージURLの取得に失敗しました (HTTP ${remoteResp.status})`,
+        });
+      }
+      const arrayBuf = await remoteResp.arrayBuffer();
+      if (arrayBuf.byteLength > 15 * 1024 * 1024) {
+        return res.status(400).json({
+          error: 'ファイルサイズが大きすぎます',
+          message: 'AI分析に対応しているファイルサイズは15MBまでです。',
+        });
+      }
+      const headerMime = remoteResp.headers.get('content-type')?.split(';')[0]?.trim();
+      const inferredMime = fileUrl.toLowerCase().split('?')[0].endsWith('.pdf')
+        ? 'application/pdf'
+        : 'image/jpeg';
+      const resolvedMime =
+        (headerMime && headerMime !== 'application/octet-stream' ? headerMime : '') ||
+        mimeType ||
+        inferredMime;
+
+      parts.push({
+        inlineData: {
+          data: Buffer.from(arrayBuf).toString('base64'),
+          mimeType: resolvedMime,
+        },
+      });
+    } else if (fileData && mimeType) {
       const cleanData = fileData.includes('base64,') ? fileData.split('base64,')[1] : fileData;
       parts.push({
         inlineData: {
@@ -374,14 +404,32 @@ app.post('/api/data/restore', (req, res) => {
   }
 });
 
+// Health check endpoint for fast readiness probes
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true });
+});
+
 // Serve Vite in development, build files in production
 if (process.env.NODE_ENV !== 'production') {
-  const { createServer } = await import('vite');
-  const vite = await createServer({
-    server: { middlewareMode: true, hmr: false },
-    appType: 'spa',
+  const vitePromise = import('vite').then(({ createServer }) =>
+    createServer({
+      server: { middlewareMode: true, hmr: false, ws: false },
+      appType: 'spa',
+    })
+  );
+
+  vitePromise.catch((err) => {
+    console.error('Failed to initialize Vite dev middleware:', err);
   });
-  app.use(vite.middlewares);
+
+  app.use(async (req, res, next) => {
+    try {
+      const vite = await vitePromise;
+      return vite.middlewares(req, res, next);
+    } catch (err) {
+      return next(err);
+    }
+  });
 } else {
   app.use(express.static(path.join(__dirname, 'dist')));
   app.get('*', (_req, res) => {

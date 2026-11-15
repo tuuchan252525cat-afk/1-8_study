@@ -30,7 +30,7 @@ import {
   calculatePersonalGrowth,
   calculateDistribution,
 } from '../utils/privacyRankings';
-import { getPersistentItem, setPersistentItem, compressImageBase64 } from '../utils/dbStorage';
+import { getPersistentItem, setPersistentItem } from '../utils/dbStorage';
 import { SubjectOption, DEFAULT_SUBJECTS, createSubjectOption } from '../constants/subjects';
 import {
   getAppBasePath,
@@ -39,6 +39,7 @@ import {
   VALID_TABS,
   isStaticDeployment,
 } from '../utils/navigation';
+import { FIRESTORE_CHUNK_SIZE } from '../utils/fileProcessing';
 
 import {
   saveMaterialToCloud,
@@ -1211,42 +1212,55 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   };
 
-  // Materials with double-layer persistent IndexedDB & server-side JSON backup & Firebase real-time sync
+  // Materials with double-layer persistent IndexedDB & server-side JSON backup & Firebase real-time chunked sync
   const addMaterial = async (
     material: Omit<StudyMaterial, 'id' | 'createdAt' | 'downloadCount' | 'authorNickname'>
   ) => {
     const author = currentStudent?.nickname || `出席番号${currentStudentNum}番`;
 
-    let processedImg = material.imageUrl;
-    if (processedImg && processedImg.startsWith('data:image/')) {
-      try {
-        processedImg = await compressImageBase64(processedImg, 1100, 1500, 0.7);
-      } catch (e) {
-        console.warn('Image compression notice:', e);
-      }
-    }
-
     const nowMs = Date.now();
-    const newMat: StudyMaterial = {
+    const rawPdf = material.pdfUrl || '';
+    const rawImg = material.imageUrl || '';
+    const chunkedField: 'pdfUrl' | 'imageUrl' | undefined =
+      rawPdf.length > FIRESTORE_CHUNK_SIZE
+        ? 'pdfUrl'
+        : rawImg.length > FIRESTORE_CHUNK_SIZE
+          ? 'imageUrl'
+          : undefined;
+    const totalChunks = chunkedField
+      ? Math.ceil((chunkedField === 'pdfUrl' ? rawPdf.length : rawImg.length) / FIRESTORE_CHUNK_SIZE)
+      : 0;
+
+    const fullMat: StudyMaterial = {
       ...material,
-      imageUrl: processedImg,
       id: `mat-user-${nowMs}-${Math.random().toString(36).slice(2, 7)}`,
       createdAt: new Date(nowMs).toISOString().slice(0, 10),
       createdAtMs: nowMs,
       downloadCount: 0,
       authorNickname: author,
+      isChunked: Boolean(chunkedField),
+      totalChunks,
+      chunkedField,
     };
 
-    // 1. Persist directly to Firebase Cloud Firestore for real-time synchronization across all PCs
+    const lightweightMat: StudyMaterial = chunkedField
+      ? {
+          ...fullMat,
+          imageUrl: undefined,
+          pdfUrl: undefined,
+        }
+      : fullMat;
+
+    // 1. Persist directly to Firebase Cloud Firestore (automatically splits >700KB into chunks subcollection)
     setCloudSyncStatus('syncing');
     try {
-      await saveMaterialToCloud(newMat);
+      await saveMaterialToCloud(fullMat);
       setCloudSyncStatus('connected');
       setCloudSyncError(null);
 
-      // Update local state and IndexedDB after cloud confirmation
+      // Update local state and IndexedDB with lightweight metadata (reassembled file cached in memory)
       setMaterials((prev) => {
-        const nextList = [newMat, ...prev.filter((m) => m.id !== newMat.id)];
+        const nextList = [lightweightMat, ...prev.filter((m) => m.id !== lightweightMat.id)];
         setPersistentItem(STORAGE_KEYS.MATERIALS, nextList);
         return nextList;
       });
@@ -1258,13 +1272,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       throw new Error(msg);
     }
 
-    // 2. Also persist to server-side JSON storage if running with Express backend
+    // 2. Also persist metadata to server-side JSON storage if running with Express backend
     if (!isStaticDeployment()) {
       try {
         await fetch('/api/data/materials', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newMat),
+          body: JSON.stringify(lightweightMat),
         });
       } catch (err) {
         console.warn('Server material persist notice:', err);
@@ -1298,7 +1312,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const deleteMaterial = async (materialId: string) => {
-    // Delete from Firebase Cloud Firestore
+    // Delete from Firebase Cloud Firestore (including chunks subcollection)
     setCloudSyncStatus('syncing');
     try {
       await deleteMaterialFromCloud(materialId);
@@ -1335,35 +1349,48 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ) => {
     const author = currentStudent?.nickname || `出席番号${currentStudentNum}番`;
 
-    let processedImg = prediction.imageUrl;
-    if (processedImg && processedImg.startsWith('data:image/')) {
-      try {
-        processedImg = await compressImageBase64(processedImg, 1100, 1500, 0.7);
-      } catch (e) {
-        console.warn('Image compression notice:', e);
-      }
-    }
-
     const nowMs = Date.now();
-    const newPred: StudentPrediction = {
+    const rawPdf = prediction.pdfUrl || '';
+    const rawImg = prediction.imageUrl || '';
+    const chunkedField: 'pdfUrl' | 'imageUrl' | undefined =
+      rawPdf.length > FIRESTORE_CHUNK_SIZE
+        ? 'pdfUrl'
+        : rawImg.length > FIRESTORE_CHUNK_SIZE
+          ? 'imageUrl'
+          : undefined;
+    const totalChunks = chunkedField
+      ? Math.ceil((chunkedField === 'pdfUrl' ? rawPdf.length : rawImg.length) / FIRESTORE_CHUNK_SIZE)
+      : 0;
+
+    const fullPred: StudentPrediction = {
       ...prediction,
-      imageUrl: processedImg,
       id: `pred-user-${nowMs}-${Math.random().toString(36).slice(2, 7)}`,
       createdAt: new Date(nowMs).toISOString().slice(0, 10),
       createdAtMs: nowMs,
       downloadCount: 0,
       authorNickname: author,
       authorStudentNumber: currentStudentNum,
+      isChunked: Boolean(chunkedField),
+      totalChunks,
+      chunkedField,
     };
+
+    const lightweightPred: StudentPrediction = chunkedField
+      ? {
+          ...fullPred,
+          imageUrl: undefined,
+          pdfUrl: undefined,
+        }
+      : fullPred;
 
     setCloudSyncStatus('syncing');
     try {
-      await saveStudentPredictionToCloud(newPred);
+      await saveStudentPredictionToCloud(fullPred);
       setCloudSyncStatus('connected');
       setCloudSyncError(null);
 
       setStudentPredictions((prev) => {
-        const nextList = [newPred, ...prev.filter((p) => p.id !== newPred.id)];
+        const nextList = [lightweightPred, ...prev.filter((p) => p.id !== lightweightPred.id)];
         setPersistentItem('classhub_student_predictions', nextList);
         return nextList;
       });

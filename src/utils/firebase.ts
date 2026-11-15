@@ -9,26 +9,30 @@ import {
   deleteDoc,
   onSnapshot,
   getDocs,
+  writeBatch,
   Firestore,
 } from 'firebase/firestore';
+import firebaseAppletConfig from '../../firebase-applet-config.json';
+import { FIRESTORE_CHUNK_SIZE, splitStringIntoChunks } from './fileProcessing';
 import { Student, StudyMaterial, StudentPrediction, WeeklyQuiz, TestRecord, ForumPost, QuizResult, PeriodicTestSchedule } from '../types';
 
 /**
- * Direct hardcoded Firebase configuration for 1-8 SITE.
- * Explicitly provided so GitHub Pages (static site builds) and external clients
- * never encounter missing .env variables or unresolved JSON import paths.
+ * Firebase configuration for 1-8 SITE.
+ * Supports overriding via Vite environment variables (VITE_FIREBASE_*)
+ * and falls back cleanly to firebase-applet-config.json.
  */
+const env = (import.meta as any)?.env || {};
 export const FIREBASE_CONFIG = {
-  projectId: 'gen-lang-client-0105505780',
-  appId: '1:195274843550:web:b9df896894df45d039e28f',
-  apiKey: 'AIzaSyB25JN_ZaselKMXEPbTyOPyxXsweA2bOwo',
-  authDomain: 'gen-lang-client-0105505780.firebaseapp.com',
-  firestoreDatabaseId: 'ai-studio-classhub-ebff2094-49ab-4aac-b936-61880ba4d9ce',
-  storageBucket: 'gen-lang-client-0105505780.firebasestorage.app',
-  messagingSenderId: '195274843550',
-  measurementId: '',
-  oAuthClientId: '195274843550-fl72dc41t7o1f66egrsqlje4q20bqdpt.apps.googleusercontent.com',
-  recaptchaSiteKey: '',
+  projectId: env.VITE_FIREBASE_PROJECT_ID || firebaseAppletConfig.projectId,
+  appId: env.VITE_FIREBASE_APP_ID || firebaseAppletConfig.appId,
+  apiKey: env.VITE_FIREBASE_API_KEY || firebaseAppletConfig.apiKey,
+  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || firebaseAppletConfig.authDomain,
+  firestoreDatabaseId: env.VITE_FIREBASE_DATABASE_ID || firebaseAppletConfig.firestoreDatabaseId,
+  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || firebaseAppletConfig.storageBucket,
+  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseAppletConfig.messagingSenderId,
+  measurementId: env.VITE_FIREBASE_MEASUREMENT_ID || firebaseAppletConfig.measurementId || '',
+  oAuthClientId: firebaseAppletConfig.oAuthClientId || '',
+  recaptchaSiteKey: firebaseAppletConfig.recaptchaSiteKey || '',
 };
 
 // 1. Initialize Firebase App (Singleton)
@@ -91,15 +95,172 @@ const isLegacyMockId = (id?: string) =>
   id === 'mat-chem-1' ||
   id === 'test-doc';
 
+// In-memory cache for reassembled chunked files (avoids repeated Firestore reads and keeps localStorage tiny)
+const reassembledChunkCache = new Map<string, string>();
+
+export function cacheReassembledFileData(
+  collectionName: 'materials' | 'student_predictions',
+  docId: string,
+  dataUrl: string
+): void {
+  if (docId && dataUrl) {
+    reassembledChunkCache.set(`${collectionName}:${docId}`, dataUrl);
+  }
+}
+
+export function getCachedReassembledFileData(
+  collectionName: 'materials' | 'student_predictions',
+  docId: string
+): string | undefined {
+  return reassembledChunkCache.get(`${collectionName}:${docId}`);
+}
+
 /**
- * Saves a study material directly to Firebase Firestore, ensuring it is visible on all PCs & smartphones in real time.
- * Sanitizes all payload fields to prevent `undefined` field crashes.
+ * Deletes all chunk documents in `{collectionName}/{docId}/chunks`.
+ */
+async function deleteAllChunksForDoc(
+  collectionName: 'materials' | 'student_predictions',
+  docId: string
+): Promise<void> {
+  const chunksColRef = collection(db, collectionName, docId, 'chunks');
+  const snap = await getDocs(chunksColRef);
+  if (snap.empty) return;
+
+  const docs = snap.docs;
+  for (let i = 0; i < docs.length; i += 100) {
+    const batch = writeBatch(db);
+    docs.slice(i, i + 100).forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+}
+
+/**
+ * Saves a StudyMaterial or StudentPrediction to Firestore.
+ * If `pdfUrl` or `imageUrl` exceeds 700,000 characters, splits it into
+ * 700,000-char chunks in `{collectionName}/{docId}/chunks/{index}` and stores
+ * only metadata (`isChunked`, `totalChunks`, `chunkedField`) on the parent doc.
+ */
+async function saveDocumentWithChunking(
+  collectionName: 'materials' | 'student_predictions',
+  material: StudyMaterial
+): Promise<void> {
+  const docId = toSafeFirestoreId(material.id);
+  const rawPdf = material.pdfUrl || '';
+  const rawImg = material.imageUrl || '';
+  const targetField: 'pdfUrl' | 'imageUrl' | null =
+    rawPdf.length > FIRESTORE_CHUNK_SIZE
+      ? 'pdfUrl'
+      : rawImg.length > FIRESTORE_CHUNK_SIZE
+        ? 'imageUrl'
+        : null;
+
+  const parentDocRef = doc(db, collectionName, docId);
+
+  if (targetField) {
+    const rawContent = targetField === 'pdfUrl' ? rawPdf : rawImg;
+    const chunks = splitStringIntoChunks(rawContent, FIRESTORE_CHUNK_SIZE);
+
+    // Cache locally so the uploader can preview immediately without re-downloading chunks
+    cacheReassembledFileData(collectionName, docId, rawContent);
+
+    const parentData: Record<string, any> = {
+      ...material,
+      id: docId,
+      isChunked: true,
+      totalChunks: chunks.length,
+      chunkedField: targetField,
+      mimeType:
+        material.mimeType ||
+        (targetField === 'pdfUrl' ? 'application/pdf' : 'image/jpeg'),
+    };
+    delete parentData.pdfUrl;
+    delete parentData.imageUrl;
+
+    // 1. Clean any stale chunks first, then write new chunks in batches of 4 (~2.8MB/batch)
+    await deleteAllChunksForDoc(collectionName, docId);
+    for (let i = 0; i < chunks.length; i += 4) {
+      const batch = writeBatch(db);
+      const slice = chunks.slice(i, i + 4);
+      slice.forEach((chunkData, offset) => {
+        const index = i + offset;
+        const chunkRef = doc(db, collectionName, docId, 'chunks', String(index));
+        batch.set(chunkRef, { index, data: chunkData });
+      });
+      await batch.commit();
+    }
+
+    // 2. Save parent document after all chunks are safely written
+    const sanitizedParent = sanitizeForFirestore(parentData);
+    await setDoc(parentDocRef, sanitizedParent);
+    return;
+  }
+
+  // Non-chunked (fits comfortably within 700,000 chars)
+  const payload = sanitizeForFirestore({
+    ...material,
+    id: docId,
+    isChunked: false,
+    totalChunks: 0,
+  });
+  await setDoc(parentDocRef, payload, { merge: true });
+}
+
+/**
+ * Fetches and reassembles chunked file data from `{collectionName}/{docId}/chunks`
+ * sorted by `index` ascending. Caches reassembled Data URL in memory.
+ */
+export async function resolveMaterialFileData(
+  material: StudyMaterial,
+  collectionName: 'materials' | 'student_predictions' = 'materials'
+): Promise<string | undefined> {
+  const direct =
+    material.fileType === 'pdf'
+      ? material.pdfUrl || material.imageUrl
+      : material.imageUrl || material.pdfUrl;
+
+  if (direct) return direct;
+
+  const docId = toSafeFirestoreId(material.id);
+  const cached = getCachedReassembledFileData(collectionName, docId);
+  if (cached) return cached;
+
+  if (!material.isChunked && !material.totalChunks) {
+    return undefined;
+  }
+
+  const chunksColRef = collection(db, collectionName, docId, 'chunks');
+  const snap = await getDocs(chunksColRef);
+  if (snap.empty) {
+    throw new Error('分割されたファイルデータが見つかりませんでした。');
+  }
+
+  const parts = snap.docs
+    .map((d) => {
+      const data = d.data();
+      return {
+        index: typeof data.index === 'number' ? data.index : Number(d.id),
+        data: String(data.data || ''),
+      };
+    })
+    .sort((a, b) => a.index - b.index);
+
+  if (material.totalChunks && parts.length < material.totalChunks) {
+    throw new Error(
+      `ファイルデータの一部が不足しています (${parts.length}/${material.totalChunks})。`
+    );
+  }
+
+  const joined = parts.map((p) => p.data).join('');
+  cacheReassembledFileData(collectionName, docId, joined);
+  return joined;
+}
+
+/**
+ * Saves a study material directly to Firebase Firestore (with automatic 700KB chunk splitting for files up to 5MB).
  */
 export async function saveMaterialToCloud(material: StudyMaterial): Promise<void> {
   try {
-    const payload = sanitizeForFirestore(material);
-    const docRef = doc(db, COLLECTIONS.MATERIALS, material.id);
-    await setDoc(docRef, payload, { merge: true });
+    await saveDocumentWithChunking(COLLECTIONS.MATERIALS, material);
     console.info(`[Firebase] Successfully saved material to Firestore: ${material.id} (${material.title})`);
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
@@ -109,12 +270,14 @@ export async function saveMaterialToCloud(material: StudyMaterial): Promise<void
 }
 
 /**
- * Deletes a study material from Firebase Firestore.
+ * Deletes a study material and its chunk subcollection from Firebase Firestore.
  */
 export async function deleteMaterialFromCloud(materialId: string): Promise<void> {
   try {
-    const docRef = doc(db, COLLECTIONS.MATERIALS, materialId);
-    await deleteDoc(docRef);
+    const docId = toSafeFirestoreId(materialId);
+    await deleteAllChunksForDoc(COLLECTIONS.MATERIALS, docId);
+    await deleteDoc(doc(db, COLLECTIONS.MATERIALS, docId));
+    reassembledChunkCache.delete(`${COLLECTIONS.MATERIALS}:${docId}`);
     console.info(`[Firebase] Deleted material from Firestore: ${materialId}`);
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
@@ -280,13 +443,11 @@ export function subscribeToStudents(
 }
 
 /**
- * Saves a student-created test prediction to Firebase Firestore (student_predictions collection).
+ * Saves a student-created test prediction to Firebase Firestore (with automatic chunk splitting for files up to 5MB).
  */
 export async function saveStudentPredictionToCloud(prediction: StudentPrediction): Promise<void> {
   try {
-    const payload = sanitizeForFirestore(prediction);
-    const docRef = doc(db, COLLECTIONS.STUDENT_PREDICTIONS, prediction.id);
-    await setDoc(docRef, payload, { merge: true });
+    await saveDocumentWithChunking(COLLECTIONS.STUDENT_PREDICTIONS, prediction);
     console.info(`[Firebase] Saved student prediction to Firestore: ${prediction.id} (${prediction.title})`);
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
@@ -296,12 +457,14 @@ export async function saveStudentPredictionToCloud(prediction: StudentPrediction
 }
 
 /**
- * Deletes a student prediction from Firebase Firestore.
+ * Deletes a student prediction and its chunk subcollection from Firebase Firestore.
  */
 export async function deleteStudentPredictionFromCloud(predictionId: string): Promise<void> {
   try {
-    const docRef = doc(db, COLLECTIONS.STUDENT_PREDICTIONS, predictionId);
-    await deleteDoc(docRef);
+    const docId = toSafeFirestoreId(predictionId);
+    await deleteAllChunksForDoc(COLLECTIONS.STUDENT_PREDICTIONS, docId);
+    await deleteDoc(doc(db, COLLECTIONS.STUDENT_PREDICTIONS, docId));
+    reassembledChunkCache.delete(`${COLLECTIONS.STUDENT_PREDICTIONS}:${docId}`);
     console.info(`[Firebase] Deleted student prediction from Firestore: ${predictionId}`);
   } catch (err: any) {
     const errorMsg = err?.message || String(err);

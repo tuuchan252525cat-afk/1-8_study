@@ -5,7 +5,17 @@ import { isStaticDeployment } from '../utils/navigation';
 import { getLastSeenAt, markSectionSeen, isItemUnseenNew, countUnseenNew } from '../utils/newBadge';
 import { FullscreenMaterialModal } from './FullscreenMaterialModal';
 import { PdfCanvasViewer } from './PdfCanvasViewer';
-import { usePdfBlobUrl } from '../utils/pdfUtils';
+import { usePdfBlobUrl, downloadUrlAsFile } from '../utils/pdfUtils';
+import {
+  prepareFileForFirestore,
+  formatFileSizeLabel,
+  isPdfFile,
+  MAX_UPLOAD_FILE_BYTES,
+} from '../utils/fileProcessing';
+import {
+  resolveMaterialFileData,
+  getCachedReassembledFileData,
+} from '../utils/firebase';
 import {
   Sparkles,
   BookOpen,
@@ -43,6 +53,7 @@ import {
   ZoomIn,
   Trophy,
   Target,
+  Loader2,
 } from 'lucide-react';
 
 export const PeriodicPredictedQuestionsView: React.FC = () => {
@@ -54,6 +65,7 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
     getQuizAnonymousRankings,
     allSubjects,
     setCurrentTab,
+    materials,
     studentPredictions,
     addStudentPrediction,
     deleteStudentPrediction,
@@ -77,10 +89,12 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
   const [inputMode, setInputMode] = useState<'file' | 'text'>('text');
   const [textPrompt, setTextPrompt] = useState('');
   const [selectedFile, setSelectedFile] = useState<{
-    fileData: string;
+    file: File;
     mimeType: string;
     fileName: string;
+    fileSizeLabel: string;
   } | null>(null);
+  const [selectedAiItemKey, setSelectedAiItemKey] = useState<string>('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
 
@@ -137,6 +151,7 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
   const [newType, setNewType] = useState<'pdf' | 'image' | 'summary'>('image');
   const [newDesc, setNewDesc] = useState('');
   const [uploadedFilePreview, setUploadedFilePreview] = useState<string>('');
+  const [selectedPredUploadFile, setSelectedPredUploadFile] = useState<File | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState<string>('');
   const [uploadedFileSize, setUploadedFileSize] = useState<string>('');
   const [newSectionTitle, setNewSectionTitle] = useState('予想問題・出題ポイント');
@@ -147,6 +162,10 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isRetryingSync, setIsRetryingSync] = useState(false);
   const [checkedPoints, setCheckedPoints] = useState<Record<string, boolean>>({});
+  const [resolvedPredChunkMap, setResolvedPredChunkMap] = useState<Record<string, string>>({});
+  const [isLoadingPredChunks, setIsLoadingPredChunks] = useState(false);
+  const [predChunkLoadError, setPredChunkLoadError] = useState<string | null>(null);
+  const [predChunkRetryTick, setPredChunkRetryTick] = useState(0);
 
   const presets = [
     { label: '数学：二次関数の動く区間・最大最小', text: '二次関数の動く区間における最大値・最小値の場合分け。文字係数 a を含む放物線 y = x^2 - 2ax + 1 (0 <= x <= 2) の最大値・最小値を求める問題。' },
@@ -207,61 +226,135 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
     setImgError(false);
   }, [selectedPrediction?.id]);
 
+  // Revoke local preview object URLs on change or unmount
+  useEffect(() => {
+    return () => {
+      if (uploadedFilePreview && uploadedFilePreview.startsWith('blob:')) {
+        URL.revokeObjectURL(uploadedFilePreview);
+      }
+    };
+  }, [uploadedFilePreview]);
+
+  // Automatically fetch and reassemble Firestore subcollection chunks for >700KB student predictions
+  useEffect(() => {
+    if (!selectedPrediction) return;
+    const direct =
+      selectedPrediction.fileType === 'pdf'
+        ? selectedPrediction.pdfUrl || selectedPrediction.imageUrl
+        : selectedPrediction.imageUrl || selectedPrediction.pdfUrl;
+    if (direct) {
+      setIsLoadingPredChunks(false);
+      setPredChunkLoadError(null);
+      return;
+    }
+
+    if (!selectedPrediction.isChunked && !selectedPrediction.totalChunks) {
+      setIsLoadingPredChunks(false);
+      setPredChunkLoadError(null);
+      return;
+    }
+
+    const existing =
+      resolvedPredChunkMap[selectedPrediction.id] ||
+      getCachedReassembledFileData('student_predictions', selectedPrediction.id);
+    if (existing) {
+      if (!resolvedPredChunkMap[selectedPrediction.id]) {
+        setResolvedPredChunkMap((prev) => ({ ...prev, [selectedPrediction.id]: existing }));
+      }
+      setIsLoadingPredChunks(false);
+      setPredChunkLoadError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingPredChunks(true);
+    setPredChunkLoadError(null);
+
+    resolveMaterialFileData(selectedPrediction, 'student_predictions')
+      .then((reassembled) => {
+        if (cancelled) return;
+        if (reassembled) {
+          setResolvedPredChunkMap((prev) => ({ ...prev, [selectedPrediction.id]: reassembled }));
+        }
+        setIsLoadingPredChunks(false);
+      })
+      .catch((err: any) => {
+        if (cancelled) return;
+        console.error('Failed to load chunked student prediction:', err);
+        setPredChunkLoadError(err?.message || '分割データの読み込みに失敗しました。');
+        setIsLoadingPredChunks(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectedPrediction?.id,
+    selectedPrediction?.isChunked,
+    selectedPrediction?.totalChunks,
+    predChunkRetryTick,
+  ]);
+
   const handlePredCardClick = (id: string) => {
     setActivePredId(id);
     setIsMobileDetailOpen(true);
   };
 
-  // AI Quiz File Upload Handler
+  // AI Quiz File Upload Handler (max 5MB, processed client-side before sending to AI endpoint)
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const result = event.target?.result as string;
-      setSelectedFile({
-        fileData: result,
-        mimeType: file.type || 'image/png',
-        fileName: file.name,
-      });
-    };
-    reader.readAsDataURL(file);
+    setAnalysisError(null);
+    if (file.size > MAX_UPLOAD_FILE_BYTES) {
+      setSelectedFile(null);
+      setAnalysisError('ファイルサイズが大きすぎます（最大5MBまで）');
+      e.target.value = '';
+      return;
+    }
+
+    const pdf = isPdfFile(file);
+    setSelectedFile({
+      file,
+      mimeType: pdf ? 'application/pdf' : file.type || 'image/jpeg',
+      fileName: file.name,
+      fileSizeLabel: formatFileSizeLabel(file.size),
+    });
+    setSelectedAiItemKey('');
   };
 
-  // Student Prediction File Upload Handler
+  // Student Prediction File Upload Handler (max 5MB, auto-compressed/chunked in Firestore)
   const handlePredFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setUploadError(null);
-      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-      const detectedType = isPdf ? 'pdf' : 'image';
-      setNewType(detectedType);
-      setUploadedFileName(file.name);
+    if (!file) return;
 
-      const sizeInMb = (file.size / (1024 * 1024)).toFixed(2);
-      setUploadedFileSize(`${sizeInMb} MB`);
-
-      if (isPdf && file.size > 800 * 1024) {
-        setUploadError(
-          `PDFサイズが大きすぎます (${sizeInMb} MB)。800KB以下のファイルを選択するか画像としてアップロードしてください。`
-        );
-      }
-
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setUploadedFilePreview(event.target.result as string);
-        }
-      };
-      reader.readAsDataURL(file);
+    setUploadError(null);
+    if (file.size > MAX_UPLOAD_FILE_BYTES) {
+      setSelectedPredUploadFile(null);
+      setUploadedFilePreview('');
+      setUploadedFileName('');
+      setUploadedFileSize('');
+      setUploadError('ファイルサイズが大きすぎます（最大5MBまで）');
+      e.target.value = '';
+      return;
     }
+
+    const isPdf = isPdfFile(file);
+    const detectedType = isPdf ? 'pdf' : 'image';
+    setNewType(detectedType);
+    setSelectedPredUploadFile(file);
+    setUploadedFileName(file.name);
+    setUploadedFileSize(formatFileSizeLabel(file.size));
+
+    const objectUrl = URL.createObjectURL(file);
+    setUploadedFilePreview(objectUrl);
   };
 
   // Run AI Generation
   const handleCreateNewPredictedQuiz = async () => {
-    if (!textPrompt.trim() && !selectedFile) {
-      alert('過去問の画像、PDF、または問題文テキストを入力してください。');
+    const trimmedKey = selectedAiItemKey.trim();
+    if (!textPrompt.trim() && !selectedFile && !trimmedKey) {
+      alert('過去問の画像・PDF（最大5MB）、共有教材、または問題文テキストを入力してください。');
       return;
     }
 
@@ -324,6 +417,7 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
         setIsCreateOpen(false);
         setTextPrompt('');
         setSelectedFile(null);
+        setSelectedAiItemKey('');
         startQuiz(newQuiz.id);
         setIsAnalyzing(false);
       }, 700);
@@ -331,13 +425,47 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
     }
 
     try {
+      let targetFileUrl: string | undefined;
+      let targetFileData: string | undefined;
+      let targetMimeType: string | undefined = selectedFile?.mimeType;
+
+      if (selectedFile?.file) {
+        const prepared = await prepareFileForFirestore(selectedFile.file);
+        targetFileData = prepared.dataUrl;
+        targetMimeType = prepared.mimeType;
+      } else if (trimmedKey) {
+        const [colPrefix, ...rest] = trimmedKey.split(':');
+        const itemId = rest.join(':');
+        const colName: 'materials' | 'student_predictions' =
+          colPrefix === 'student_predictions' ? 'student_predictions' : 'materials';
+        const targetList = colName === 'student_predictions' ? studentPredictions : materials;
+        const targetItem = targetList.find((it) => it.id === itemId);
+
+        if (targetItem) {
+          const resolvedSource = await resolveMaterialFileData(targetItem, colName);
+          if (resolvedSource) {
+            const dataUrlMime = resolvedSource.match(/^data:([^;]+);/)?.[1];
+            targetMimeType =
+              targetItem.mimeType ||
+              dataUrlMime ||
+              (targetItem.fileType === 'pdf' ? 'application/pdf' : 'image/jpeg');
+            if (/^https?:\/\//i.test(resolvedSource)) {
+              targetFileUrl = resolvedSource;
+            } else {
+              targetFileData = resolvedSource;
+            }
+          }
+        }
+      }
+
       const response = await fetch('/api/ai/analyze-test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           textPrompt: textPrompt.trim(),
-          fileData: selectedFile?.fileData,
-          mimeType: selectedFile?.mimeType,
+          fileUrl: targetFileUrl,
+          fileData: targetFileData,
+          mimeType: targetMimeType,
         }),
       });
 
@@ -375,6 +503,7 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
       setIsCreateOpen(false);
       setTextPrompt('');
       setSelectedFile(null);
+      setSelectedAiItemKey('');
       startQuiz(newQuiz.id);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '予想問題の生成に失敗しました。';
@@ -392,23 +521,26 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
     setUploadError(null);
     setIsSaving(true);
     try {
-      const isPdf =
-        newType === 'pdf' ||
-        uploadedFileName.toLowerCase().endsWith('.pdf') ||
-        uploadedFilePreview.startsWith('data:application/pdf');
+      let preparedImageUrl: string | undefined;
+      let preparedPdfUrl: string | undefined;
+      let finalType: 'pdf' | 'image' | 'summary' = newType;
+      let finalSize = uploadedFileSize || '450 KB';
+      let finalMimeType: string | undefined;
 
-      if (isPdf && uploadedFilePreview.length > 900 * 1024) {
-        throw new Error(
-          'PDFファイルの容量が大きすぎます（約' +
-            uploadedFileSize +
-            '）。Firestoreの上限（1MB）に収めるため、800KB以下のPDFを選択してください。'
-        );
+      if (selectedPredUploadFile) {
+        if (selectedPredUploadFile.size > MAX_UPLOAD_FILE_BYTES) {
+          throw new Error('ファイルサイズが大きすぎます（最大5MBまで）');
+        }
+        const prepared = await prepareFileForFirestore(selectedPredUploadFile);
+        finalType = prepared.fileType;
+        finalSize = prepared.fileSizeLabel;
+        finalMimeType = prepared.mimeType;
+        if (prepared.fileType === 'pdf') {
+          preparedPdfUrl = prepared.dataUrl;
+        } else {
+          preparedImageUrl = prepared.dataUrl;
+        }
       }
-
-      const finalType: 'pdf' | 'image' | 'summary' = isPdf ? 'pdf' : newType;
-      const finalSize =
-        uploadedFileSize ||
-        (finalType === 'pdf' ? '1.4 MB' : finalType === 'image' ? '1.2 MB' : '450 KB');
 
       await addStudentPrediction({
         title: newTitle.trim(),
@@ -416,8 +548,9 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
         description: newDesc.trim() || '生徒作成・テスト直前予想問題プリント',
         fileType: finalType,
         fileSize: finalSize,
-        imageUrl: isPdf ? undefined : (uploadedFilePreview || undefined),
-        pdfUrl: isPdf ? (uploadedFilePreview || undefined) : undefined,
+        imageUrl: preparedImageUrl,
+        pdfUrl: preparedPdfUrl,
+        mimeType: finalMimeType,
         contentPreview: newContent.trim() || '自作の定期考査予想問題プレビューです。',
         documentSections: [
           {
@@ -442,6 +575,7 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
         setNewDesc('');
         setNewContent('');
         setNewFormula('');
+        setSelectedPredUploadFile(null);
         setUploadedFilePreview('');
         setUploadedFileName('');
         setUploadedFileSize('');
@@ -581,15 +715,37 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
     return { bg: 'bg-[#1c603a] text-white', label: '定期対策', border: 'border-[#154a2c]' };
   };
 
+  const resolvedPredChunkData = selectedPrediction
+    ? resolvedPredChunkMap[selectedPrediction.id] ||
+      getCachedReassembledFileData('student_predictions', selectedPrediction.id)
+    : undefined;
+
+  const resolvedSelectedPrediction: StudentPrediction | undefined = selectedPrediction
+    ? {
+        ...selectedPrediction,
+        pdfUrl:
+          selectedPrediction.pdfUrl ||
+          (selectedPrediction.fileType === 'pdf' || selectedPrediction.chunkedField === 'pdfUrl'
+            ? resolvedPredChunkData
+            : undefined),
+        imageUrl:
+          selectedPrediction.imageUrl ||
+          (selectedPrediction.fileType !== 'pdf' && selectedPrediction.chunkedField !== 'pdfUrl'
+            ? resolvedPredChunkData
+            : undefined),
+      }
+    : undefined;
+
   // Student Prediction PDF/Image preview helper
   const isSelectedPredPdf =
-    selectedPrediction &&
-    (selectedPrediction.fileType === 'pdf' ||
-      Boolean(selectedPrediction.pdfUrl) ||
-      selectedPrediction.imageUrl?.startsWith('data:application/pdf') ||
-      selectedPrediction.imageUrl?.toLowerCase().endsWith('.pdf'));
+    resolvedSelectedPrediction &&
+    (resolvedSelectedPrediction.fileType === 'pdf' ||
+      Boolean(resolvedSelectedPrediction.pdfUrl) ||
+      resolvedSelectedPrediction.imageUrl?.startsWith('data:application/pdf') ||
+      resolvedSelectedPrediction.imageUrl?.toLowerCase().endsWith('.pdf'));
 
-  const activePredPdfSource = selectedPrediction?.pdfUrl || selectedPrediction?.imageUrl;
+  const activePredPdfSource =
+    resolvedSelectedPrediction?.pdfUrl || resolvedSelectedPrediction?.imageUrl;
   const predPdfBlobUrl = usePdfBlobUrl(isSelectedPredPdf ? activePredPdfSource : undefined);
 
   const renderPredPreviewContent = (isMobileModal: boolean = false) => {
@@ -677,8 +833,32 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
               </span>
             </div>
 
-            {/* PDF Viewer (PDF.js Canvas + Blob URL) */}
-            {isSelectedPredPdf && activePredPdfSource ? (
+            {/* Chunked File Loading / Error States */}
+            {isLoadingPredChunks ? (
+              <div className="p-10 sm:p-14 text-center bg-[#fdfbf7] rounded-3xl border border-stone-200 space-y-3">
+                <Loader2 className="w-8 h-8 animate-spin text-[#1c603a] mx-auto" />
+                <div className="text-sm font-black text-slate-800">
+                  分割ファイルを読み込み中...
+                </div>
+                <p className="text-xs text-stone-500 font-medium">
+                  クラウドからデータを結合しています（全{selectedPrediction.totalChunks || ''}チャンク）
+                </p>
+              </div>
+            ) : predChunkLoadError ? (
+              <div className="p-8 sm:p-10 text-center bg-rose-50 rounded-3xl border border-rose-200 space-y-3">
+                <AlertTriangle className="w-8 h-8 text-rose-500 mx-auto" />
+                <h4 className="text-sm font-black text-rose-900">データの読み込みに失敗しました</h4>
+                <p className="text-xs text-rose-700 font-medium">{predChunkLoadError}</p>
+                <button
+                  type="button"
+                  onClick={() => setPredChunkRetryTick((t) => t + 1)}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#1c603a] text-white text-xs font-black cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>再読み込み</span>
+                </button>
+              </div>
+            ) : isSelectedPredPdf && activePredPdfSource ? (
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-stone-100 rounded-2xl border border-stone-200">
                   <div className="flex items-center gap-2 text-xs font-black text-slate-800">
@@ -691,14 +871,14 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
                   <div className="flex items-center gap-2 flex-wrap">
                     {predPdfBlobUrl && (
                       <>
-                        <a
-                          href={predPdfBlobUrl}
-                          download={`${selectedPrediction.title}.pdf`}
-                          className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white hover:bg-stone-200 border border-stone-300 text-slate-800 font-bold text-xs shadow-2xs"
+                        <button
+                          type="button"
+                          onClick={() => downloadUrlAsFile(predPdfBlobUrl, `${selectedPrediction.title}.pdf`)}
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white hover:bg-stone-200 border border-stone-300 text-slate-800 font-bold text-xs shadow-2xs cursor-pointer"
                         >
                           <Download className="w-3.5 h-3.5" />
                           <span>保存</span>
-                        </a>
+                        </button>
                         <a
                           href={predPdfBlobUrl}
                           target="_blank"
@@ -746,15 +926,30 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
                   ファイルがPDF形式であるか、直接表示できない画像形式の可能性があります。「要点・公式解説」タブをご確認ください。
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                  {resolvedSelectedPrediction?.imageUrl && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        downloadUrlAsFile(
+                          resolvedSelectedPrediction.imageUrl!,
+                          selectedPrediction.title
+                        )
+                      }
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black shadow-xs cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>ファイルを保存</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => setViewMode('text')}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#1c603a] text-white text-xs font-black shadow-xs cursor-pointer"
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white hover:bg-stone-100 border border-stone-300 text-slate-800 text-xs font-black shadow-xs cursor-pointer"
                   >
                     <span>要点・解説を見る</span>
                   </button>
                 </div>
               </div>
-            ) : selectedPrediction.imageUrl ? (
+            ) : resolvedSelectedPrediction?.imageUrl ? (
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2 text-[11px] font-bold text-stone-500 px-1">
                   <span className="inline-flex items-center gap-1 text-[#1c603a]">
@@ -772,7 +967,7 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
                 </div>
                 <div className="border border-stone-200 rounded-3xl overflow-auto pinch-zoom-surface bg-slate-900 shadow-inner p-2 sm:p-4 text-center min-h-[300px] flex items-center justify-center">
                   <img
-                    src={selectedPrediction.imageUrl}
+                    src={resolvedSelectedPrediction.imageUrl}
                     alt={selectedPrediction.title}
                     onClick={() => setIsFullscreenPreview(true)}
                     onError={() => setImgError(true)}
@@ -1251,6 +1446,85 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
                       placeholder="過去問の問題文や、テスト対策したい単元・重要テーマを入力してください。"
                       className="w-full p-3.5 rounded-2xl border border-stone-300 bg-white text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#1c603a]"
                     />
+
+                    {/* File (<= 5MB) or Shared Material attachment for AI Analysis */}
+                    <div className="p-3.5 rounded-2xl bg-white border border-stone-200 space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                          <Upload className="w-3.5 h-3.5 text-[#1c603a]" />
+                          <span>過去問PDF・画像から分析（任意 / 最大5MB）</span>
+                        </span>
+                        {(selectedFile || selectedAiItemKey) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedFile(null);
+                              setSelectedAiItemKey('');
+                            }}
+                            className="text-[11px] font-black text-rose-600 hover:underline cursor-pointer"
+                          >
+                            クリア
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="block text-[11px] font-bold text-stone-500 mb-1">
+                            端末からファイルを選択（PDF / 画像）
+                          </label>
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp,application/pdf"
+                            onChange={handleFileChange}
+                            className="w-full text-[11px] border border-stone-300 rounded-xl p-2 bg-[#fdfbf7] font-bold cursor-pointer"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-stone-500 mb-1">
+                            または共有済みの教材・予想問題を選択
+                          </label>
+                          <select
+                            value={selectedAiItemKey}
+                            onChange={(e) => {
+                              setSelectedAiItemKey(e.target.value);
+                              if (e.target.value) setSelectedFile(null);
+                            }}
+                            className="w-full text-[11px] border border-stone-300 rounded-xl p-2 bg-[#fdfbf7] font-bold focus:outline-none focus:border-[#1c603a] cursor-pointer"
+                          >
+                            <option value="">-- 共有教材から選ぶ --</option>
+                            {[
+                              ...materials.map((item) => ({ item, col: 'materials' as const })),
+                              ...studentPredictions.map((item) => ({
+                                item,
+                                col: 'student_predictions' as const,
+                              })),
+                            ]
+                              .filter(
+                                ({ item }) =>
+                                  Boolean(item.pdfUrl) ||
+                                  Boolean(item.imageUrl) ||
+                                  Boolean(item.isChunked) ||
+                                  Boolean(item.totalChunks && item.totalChunks > 0)
+                              )
+                              .map(({ item, col }) => (
+                                <option key={`${col}:${item.id}`} value={`${col}:${item.id}`}>
+                                  {item.title}
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {selectedFile && (
+                        <div className="text-[11px] font-black text-[#1c603a] bg-[#f4f8f5] px-3 py-1.5 rounded-xl border border-emerald-200 flex items-center gap-1.5">
+                          <FileText className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">
+                            選択中: {selectedFile.fileName} ({selectedFile.fileSizeLabel})
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {analysisError && (
@@ -1702,7 +1976,7 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
 
                 <div>
                   <label className="block text-xs font-black text-slate-700 mb-1.5">
-                    予想問題プリント画像・PDFファイル選択
+                    予想問題プリント画像・PDFファイル選択（JPG, PNG, PDF / 最大5MB）
                   </label>
                   <input
                     type="file"
@@ -1710,12 +1984,17 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
                     onChange={handlePredFileChange}
                     className="w-full text-xs border border-stone-300 rounded-2xl p-2.5 bg-[#fdfbf7] font-bold cursor-pointer"
                   />
+                  <p className="text-[10px] text-stone-500 font-bold mt-1">
+                    ※画像は自動で軽量化（最大1600px・JPEG圧縮）され、PDFはそのまま最大5MBまでチャンク分割してFirestoreに保存できます。
+                  </p>
                   {uploadedFilePreview && (
                     <div className="mt-2 p-3 bg-stone-100 rounded-2xl text-center border border-stone-200">
                       {newType === 'pdf' ? (
                         <div className="flex items-center justify-center gap-2 text-xs font-black text-rose-600 py-2">
                           <FileText className="w-5 h-5" />
-                          <span>PDFファイル選択済み: {uploadedFileName || '予想問題.pdf'}</span>
+                          <span>
+                            PDF選択済み: {uploadedFileName || '予想問題.pdf'} ({uploadedFileSize})
+                          </span>
                         </div>
                       ) : (
                         <img
@@ -1725,7 +2004,7 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
                         />
                       )}
                       <span className="text-[10px] text-[#1c603a] font-black block mt-1">
-                        ◎ ファイルを認識しました（自動保存されます）
+                        ◎ ファイルを認識しました（投稿時に自動圧縮・分割してFirebaseへ保存されます）
                       </span>
                     </div>
                   )}
@@ -1768,7 +2047,7 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
                     disabled={isSaving}
                     className="px-5 py-2.5 rounded-2xl bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black shadow-xs transition-all cursor-pointer disabled:opacity-50"
                   >
-                    {isSaving ? '保存中...' : '投稿して全クラス共有'}
+                    {isSaving ? 'アップロード中...' : '投稿して全クラス共有'}
                   </button>
                 </div>
               </form>
@@ -1780,7 +2059,7 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
       <FullscreenMaterialModal
         isOpen={isFullscreenPreview}
         onClose={() => setIsFullscreenPreview(false)}
-        material={selectedPrediction}
+        material={resolvedSelectedPrediction}
       />
     </div>
   );

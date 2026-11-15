@@ -3,7 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist/types/src/display/api';
 import { Loader2, AlertTriangle, Download, FileText } from 'lucide-react';
-import { decodeDataUrlToBytes } from '../utils/pdfUtils';
+import { decodeDataUrlToBytes, downloadUrlAsFile } from '../utils/pdfUtils';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -85,7 +85,7 @@ export const PdfCanvasViewer: React.FC<PdfCanvasViewerProps> = ({
 
     const loadingTask = bytes
       ? pdfjsLib.getDocument({ data: bytes.slice() })
-      : pdfjsLib.getDocument({ url: source });
+      : pdfjsLib.getDocument({ url: source, withCredentials: false });
 
     loadingTask.promise
       .then((doc) => {
@@ -235,14 +235,14 @@ export const PdfCanvasViewer: React.FC<PdfCanvasViewerProps> = ({
           </div>
           {blobUrl && (
             <div className="pt-1 flex justify-center">
-              <a
-                href={blobUrl}
-                download={`${title}.pdf`}
-                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black shadow-xs"
+              <button
+                type="button"
+                onClick={() => downloadUrlAsFile(blobUrl, `${title}.pdf`)}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black shadow-xs cursor-pointer"
               >
                 <Download className="w-4 h-4" />
                 <span>PDFを端末に保存</span>
-              </a>
+              </button>
             </div>
           )}
         </div>

@@ -14,6 +14,11 @@ service cloud.firestore {
     match /materials/{materialId} {
       allow read: if true;
       allow create, update, delete: if isValidId(materialId);
+
+      match /chunks/{chunkId} {
+        allow read: if true;
+        allow create, update, delete: if isValidId(materialId) && isValidId(chunkId);
+      }
     }
 
     // Quizzes & predicted questions
@@ -56,6 +61,11 @@ service cloud.firestore {
     match /student_predictions/{predictionId} {
       allow read: if true;
       allow create, update, delete: if isValidId(predictionId);
+
+      match /chunks/{chunkId} {
+        allow read: if true;
+        allow create, update, delete: if isValidId(predictionId) && isValidId(chunkId);
+      }
     }
 
     // Periodic test schedules for countdown

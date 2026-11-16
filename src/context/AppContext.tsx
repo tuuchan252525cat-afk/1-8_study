@@ -65,8 +65,10 @@ import {
   fetchPeriodicTestsFromCloud,
   subscribeToPeriodicTests,
   savePostToCloud,
+  deletePostFromCloud,
   fetchPostsFromCloud,
   subscribeToPosts,
+  isOctoberPost,
 } from '../utils/firebase';
 
 import { AppTab } from '../types';
@@ -134,6 +136,7 @@ interface AppContextType {
   // Forum (Board)
   posts: ForumPost[];
   addPost: (subjectTag: string, title: string, content: string) => Promise<void>;
+  deletePost: (postId: string) => Promise<void>;
   addComment: (postId: string, content: string) => Promise<void>;
   toggleReaction: (postId: string, reactionType: 'like' | 'heart' | 'lightbulb') => void;
 
@@ -240,7 +243,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         // A. Load from client storage (IndexedDB / localStorage)
         const localRecords = await getPersistentItem<TestRecord[]>(STORAGE_KEYS.TEST_RECORDS, INITIAL_TEST_RECORDS);
         const localMaterials = await getPersistentItem<StudyMaterial[]>(STORAGE_KEYS.MATERIALS, []);
-        const localPosts = await getPersistentItem<ForumPost[]>(STORAGE_KEYS.POSTS, INITIAL_POSTS);
+        const rawLocalPosts = await getPersistentItem<ForumPost[]>(STORAGE_KEYS.POSTS, INITIAL_POSTS);
+        const localPosts = (rawLocalPosts || []).filter((p) => p && !isOctoberPost(p));
         const localSubs = await getPersistentItem<QuizResult[]>(STORAGE_KEYS.QUIZ_SUBMISSIONS, INITIAL_QUIZ_SUBMISSIONS);
         const localActiveTest = await getPersistentItem<string>(STORAGE_KEYS.ACTIVE_TEST, '第1回 定期考査');
         const localQuizzes = await getPersistentItem<WeeklyQuiz[]>(STORAGE_KEYS.QUIZZES, INITIAL_QUIZZES);
@@ -404,16 +408,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const postsMap = new Map<string, ForumPost>();
         [...(serverData?.posts || []), ...(localPosts || []), ...(cloudPosts || [])].forEach(
           (p: ForumPost) => {
-            if (!p?.id) return;
+            if (!p?.id || isOctoberPost(p)) return;
             postsMap.set(p.id, mergeForumPost(postsMap.get(p.id), p));
           }
         );
-        const mergedPosts = Array.from(postsMap.values()).sort(
-          (a, b) => (b.createdAtMs || Date.parse(b.createdAt) || 0) - (a.createdAtMs || Date.parse(a.createdAt) || 0)
-        );
+        const mergedPosts = Array.from(postsMap.values())
+          .filter((p) => !isOctoberPost(p))
+          .sort(
+            (a, b) => (b.createdAtMs || Date.parse(b.createdAt) || 0) - (a.createdAtMs || Date.parse(a.createdAt) || 0)
+          );
 
-        // Backfill any local/server forum posts or newer comments/reactions to Firestore so app updates never wipe them
+        // Backfill any real newer comments/reactions to Firestore (excluding deleted October posts)
         mergedPosts.forEach((p) => {
+          if (isOctoberPost(p)) return;
           const cloudCopy = cloudPostsMap.get(p.id);
           const needsCloudSync =
             !cloudCopy ||
@@ -671,14 +678,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     const unsubscribe = subscribeToPosts(
       (cloudList) => {
-        if (!cloudList || cloudList.length === 0) return;
         setPosts((prev) => {
+          const filteredCloud = (cloudList || []).filter((p) => p && !isOctoberPost(p));
+          const cloudIdSet = new Set(filteredCloud.map((c) => c.id));
           const map = new Map<string, ForumPost>();
-          prev.forEach((p) => {
+          filteredCloud.forEach((p) => {
             if (p?.id) map.set(p.id, p);
           });
-          cloudList.forEach((p) => {
-            if (p?.id) map.set(p.id, mergeForumPost(map.get(p.id), p));
+          prev.forEach((p) => {
+            if (!p?.id || isOctoberPost(p)) return;
+            if (cloudIdSet.has(p.id)) {
+              map.set(p.id, mergeForumPost(map.get(p.id), p));
+            } else if (p.createdAtMs && Date.now() - p.createdAtMs < 60000) {
+              map.set(p.id, p);
+            }
           });
           const merged = Array.from(map.values()).sort(
             (a, b) => (b.createdAtMs || Date.parse(b.createdAt) || 0) - (a.createdAtMs || Date.parse(a.createdAt) || 0)
@@ -1497,6 +1510,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  const deletePost = async (postId: string) => {
+    setPosts((prev) => {
+      const next = prev.filter((p) => p.id !== postId);
+      setPersistentItem(STORAGE_KEYS.POSTS, next);
+      return next;
+    });
+    try {
+      await deletePostFromCloud(postId);
+      setCloudSyncStatus('connected');
+      setCloudSyncError(null);
+    } catch (e: any) {
+      const msg = e?.message || '掲示板投稿の削除に失敗しました';
+      setCloudSyncStatus('error');
+      setCloudSyncError(msg);
+      throw new Error(msg);
+    }
+  };
+
   const addComment = async (postId: string, content: string) => {
     if (!currentStudentNum || !content.trim()) return;
     const target = posts.find((p) => p.id === postId);
@@ -1907,6 +1938,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         deleteStudentPrediction,
         posts,
         addPost,
+        deletePost,
         addComment,
         toggleReaction,
         currentTab,

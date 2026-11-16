@@ -232,6 +232,19 @@ interface ServerData {
   lastUpdated: string;
 }
 
+function isOctoberPost(p: any): boolean {
+  if (!p) return false;
+  if (['post-1', 'post-2', 'post-3', 'post-4'].includes(p.id || '')) return true;
+  const createdAt = String(p.createdAt || '');
+  if (createdAt.includes('-10-') || createdAt.startsWith('2026-10')) {
+    const d = new Date(createdAt);
+    if (!isNaN(d.getTime()) && d.getFullYear() === 2026 && d.getMonth() === 9) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function loadServerStorage(): ServerData {
   try {
     if (fs.existsSync(DATA_FILE)) {
@@ -241,7 +254,7 @@ function loadServerStorage(): ServerData {
         materials: Array.isArray(parsed.materials) ? parsed.materials : [],
         quizzes: Array.isArray(parsed.quizzes) ? parsed.quizzes : [],
         testRecords: Array.isArray(parsed.testRecords) ? parsed.testRecords : [],
-        posts: Array.isArray(parsed.posts) ? parsed.posts : [],
+        posts: (Array.isArray(parsed.posts) ? parsed.posts : []).filter((p: any) => p && !isOctoberPost(p)),
         customSubjects: Array.isArray(parsed.customSubjects) ? parsed.customSubjects : [],
         quizSubmissions: Array.isArray(parsed.quizSubmissions) ? parsed.quizSubmissions : [],
         lastUpdated: parsed.lastUpdated || new Date().toISOString(),
@@ -306,10 +319,10 @@ app.post('/api/data/sync', (req, res) => {
     (clientData.testRecords || []).forEach((r) => { if (r?.id) recordsMap.set(r.id, r); });
     const mergedRecords = Array.from(recordsMap.values());
 
-    // Union merge posts
+    // Union merge posts (excluding deleted October posts)
     const postsMap = new Map<string, any>();
-    (serverData.posts || []).forEach((p) => { if (p?.id) postsMap.set(p.id, p); });
-    (clientData.posts || []).forEach((p) => { if (p?.id) postsMap.set(p.id, p); });
+    (serverData.posts || []).forEach((p) => { if (p?.id && !isOctoberPost(p)) postsMap.set(p.id, p); });
+    (clientData.posts || []).forEach((p) => { if (p?.id && !isOctoberPost(p)) postsMap.set(p.id, p); });
     const mergedPosts = Array.from(postsMap.values());
 
     // Union merge custom subjects

@@ -791,10 +791,26 @@ export function subscribeToPeriodicTests(
   }
 }
 
+export function isOctoberPost(p: { id?: string; createdAt?: string }): boolean {
+  if (!p) return false;
+  if (['post-1', 'post-2', 'post-3', 'post-4'].includes(p.id || '')) return true;
+  const createdAt = p.createdAt || '';
+  if (createdAt.includes('-10-') || createdAt.startsWith('2026-10')) {
+    const d = new Date(createdAt);
+    if (!isNaN(d.getTime()) && d.getFullYear() === 2026 && d.getMonth() === 9) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function normalizeForumPost(raw: any, fallbackId?: string): ForumPost | null {
   if (!raw || !raw.title) return null;
   const id = raw.id || fallbackId;
   if (!id) return null;
+  if (isOctoberPost({ id: String(id), createdAt: raw.createdAt })) {
+    return null;
+  }
   return {
     id: String(id),
     studentNumber: Number(raw.studentNumber) || 0,
@@ -818,6 +834,10 @@ function normalizeForumPost(raw: any, fallbackId?: string): ForumPost | null {
  * Throws an explicit error on failure so the UI can notify or retry instead of silently losing posts.
  */
 export async function savePostToCloud(post: ForumPost): Promise<void> {
+  if (isOctoberPost(post)) {
+    console.warn(`[Firebase] Ignored saving deleted October post: ${post.id}`);
+    return;
+  }
   try {
     const docId = toSafeFirestoreId(post.id);
     const payload = sanitizeForFirestore({
@@ -838,6 +858,22 @@ export async function savePostToCloud(post: ForumPost): Promise<void> {
     const errorMsg = err?.message || String(err);
     console.error('[Firebase] Failed to save forum post:', errorMsg);
     throw new Error(`掲示板のクラウド保存エラー: ${errorMsg}`);
+  }
+}
+
+/**
+ * Deletes a class forum post from Firebase Firestore (`posts` collection).
+ */
+export async function deletePostFromCloud(postId: string): Promise<void> {
+  try {
+    const docId = toSafeFirestoreId(postId);
+    const docRef = doc(db, COLLECTIONS.POSTS, docId);
+    await deleteDoc(docRef);
+    console.info(`[Firebase] Deleted forum post: ${docId}`);
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error('[Firebase] Failed to delete forum post:', errorMsg);
+    throw new Error(`掲示板のクラウド削除エラー: ${errorMsg}`);
   }
 }
 

@@ -12,16 +12,20 @@ import {
   X,
   RefreshCw,
   AlertCircle,
+  Trash2,
 } from 'lucide-react';
+import { isOctoberPost } from '../utils/firebase';
 
 export const ForumView: React.FC = () => {
   const {
     posts,
     addPost,
+    deletePost,
     addComment,
     toggleReaction,
     allSubjects,
     students,
+    currentStudentNum,
     cloudSyncError,
     retryCloudSync,
   } = useApp();
@@ -49,8 +53,19 @@ export const ForumView: React.FC = () => {
     '質問',
   ];
 
-  const filteredPosts =
-    activeTag === 'すべて' ? posts : posts.filter((p) => p.subjectTag === activeTag);
+  const filteredPosts = (
+    activeTag === 'すべて' ? posts : posts.filter((p) => p.subjectTag === activeTag)
+  ).filter((p) => !isOctoberPost(p));
+
+  const handleDeletePost = async (postId: string) => {
+    if (window.confirm('この投稿を削除してもよろしいですか？（クラウドからも削除されます）')) {
+      try {
+        await deletePost(postId);
+      } catch (err: any) {
+        alert(err?.message || '投稿の削除に失敗しました');
+      }
+    }
+  };
 
   const handleManualSync = async () => {
     setIsRetryingSync(true);
@@ -219,9 +234,21 @@ export const ForumView: React.FC = () => {
                       </span>
                     )}
                   </div>
-                  <span className="text-[11px] font-black text-[#1c603a] bg-[#f4f8f5] px-2.5 py-0.5 rounded-full border border-[#1c603a]/20">
-                    ◎ {post.subjectTag}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-black text-[#1c603a] bg-[#f4f8f5] px-2.5 py-0.5 rounded-full border border-[#1c603a]/20">
+                      ◎ {post.subjectTag}
+                    </span>
+                    {currentStudentNum && post.studentNumber === currentStudentNum && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeletePost(post.id)}
+                        className="p-1.5 rounded-xl bg-stone-100 hover:bg-rose-50 text-stone-400 hover:text-rose-600 transition-colors cursor-pointer border border-stone-200"
+                        title="投稿を削除する"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Title & Body */}

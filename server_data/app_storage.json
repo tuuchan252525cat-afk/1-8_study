@@ -27,8 +27,65 @@
   ],
   "quizzes": [],
   "testRecords": [],
-  "posts": [],
+  "posts": [
+    {
+      "id": "post-user-1794750661433-1vuq",
+      "studentNumber": 31,
+      "authorNickname": "生徒 31番",
+      "subjectTag": "生物",
+      "title": "テスト問題配布したよーーん",
+      "content": "生物期末テスト模試できたよ、\n１問１点で、問題数多くて、むずめやけど\n基本はリードα、研究ノート、授業プリントから出してるから力試しに使ってね",
+      "createdAt": "2026-11-15T13:51:01.433Z",
+      "createdAtMs": 1794750661433,
+      "reactions": {
+        "like": 1,
+        "heart": 137,
+        "lightbulb": 1
+      },
+      "comments": []
+    },
+    {
+      "content": "テストメールです。",
+      "subjectTag": "その他",
+      "reactions": {
+        "like": 0,
+        "heart": 0,
+        "lightbulb": 0
+      },
+      "comments": [
+        {
+          "createdAt": "2026-11-13T11:28:29.441Z",
+          "studentNumber": 5,
+          "authorNickname": "Pen",
+          "id": "c-1794569309441",
+          "content": "Test2"
+        }
+      ],
+      "title": "Hello",
+      "authorNickname": "Pen",
+      "createdAt": "2026-11-13T08:31:10.887Z",
+      "studentNumber": 5,
+      "createdAtMs": 1794558670887,
+      "id": "post-user-1794558670887"
+    },
+    {
+      "id": "post-user-1794466384246",
+      "studentNumber": 5,
+      "authorNickname": "Pen",
+      "subjectTag": "その他",
+      "title": "Hello! World!",
+      "content": "テストメッセージです。",
+      "createdAt": "2026-11-12T06:53:04.246Z",
+      "createdAtMs": 1794466384246,
+      "reactions": {
+        "like": 0,
+        "heart": 0,
+        "lightbulb": 0
+      },
+      "comments": []
+    }
+  ],
   "customSubjects": [],
   "quizSubmissions": [],
-  "lastUpdated": "2026-11-12T05:30:34.386Z"
+  "lastUpdated": "2026-11-16T01:05:00.602Z"
 }

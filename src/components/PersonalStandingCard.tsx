@@ -21,10 +21,12 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-5 pb-4 border-b border-stone-100">
         <div className="flex items-center gap-3">
           <span
-            className="w-11 h-11 rounded-2xl flex items-center justify-center text-white text-base font-black shadow-xs shrink-0"
+            className={`w-11 h-11 rounded-2xl flex items-center justify-center text-white font-black shadow-xs shrink-0 ${
+              currentStudent.role === 'teacher' ? 'text-xs' : 'text-base'
+            }`}
             style={{ backgroundColor: currentStudent.avatarColor }}
           >
-            {currentStudent.attendanceNumber}
+            {currentStudent.role === 'teacher' ? '先生' : currentStudent.attendanceNumber}
           </span>
           <div>
             <div className="flex items-center gap-2">
@@ -32,7 +34,9 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
                 {currentStudent.nickname}
               </span>
               <span className="text-xs text-stone-500 font-bold bg-stone-100 px-2 py-0.5 rounded-md">
-                出席番号 {currentStudent.attendanceNumber}番
+                {currentStudent.role === 'teacher'
+                  ? '先生用アカウント'
+                  : `出席番号 ${currentStudent.attendanceNumber}番`}
               </span>
             </div>
             <div className="text-[11px] text-[#1c603a] font-extrabold tracking-wide mt-0.5 flex items-center gap-1">

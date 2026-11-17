@@ -202,6 +202,12 @@ function mergeForumPost(existing: ForumPost | undefined, incoming: ForumPost): F
   };
 }
 
+function getStudentFallbackLabel(attendanceNumber: number): string {
+  if (attendanceNumber === 101) return '先生（担任）';
+  if (attendanceNumber === 102) return '先生（副担任）';
+  return `出席番号${attendanceNumber}番`;
+}
+
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // 1. Current Student State
   const [students, setStudents] = useState<Student[]>(INITIAL_STUDENTS);
@@ -279,6 +285,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           let nickname = localObj?.nickname || s.nickname;
           let password = mergedPasses[s.attendanceNumber] || s.password || '0000';
           let hasCustomPassword = localObj?.hasCustomPassword || Boolean(mergedPasses[s.attendanceNumber]);
+          let avatarColor = localObj?.avatarColor || s.avatarColor;
+          let role = localObj?.role || s.role;
 
           if (cloudObj) {
             if (cloudObj.nickname) nickname = cloudObj.nickname;
@@ -290,6 +298,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             if (cloudObj.hasCustomPassword !== undefined) {
               hasCustomPassword = cloudObj.hasCustomPassword;
             }
+            if (cloudObj.avatarColor) avatarColor = cloudObj.avatarColor;
+            if (cloudObj.role) role = cloudObj.role;
           }
 
           return {
@@ -297,6 +307,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             nickname,
             password,
             hasCustomPassword,
+            avatarColor,
+            role,
           };
         });
 
@@ -544,6 +556,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             password: cloudObj.password || s.password || '0000',
             hasCustomPassword:
               cloudObj.hasCustomPassword ?? (cloudObj.password ? true : s.hasCustomPassword),
+            avatarColor: cloudObj.avatarColor || s.avatarColor,
+            role: cloudObj.role || s.role,
           };
         })
       );
@@ -864,12 +878,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, []);
 
   const login = (attendanceNumber: number, password?: string) => {
-    if (attendanceNumber < 1 || attendanceNumber > 40) {
-      return { success: false, error: '出席番号は1番〜40番を入力してください' };
-    }
     const student = students.find((s) => s.attendanceNumber === attendanceNumber);
     if (!student) {
-      return { success: false, error: '指定された出席番号が存在しません' };
+      return { success: false, error: '指定された出席番号またはアカウントが存在しません' };
     }
 
     const expectedPass = passwords[attendanceNumber] || student.password || '0000';
@@ -944,7 +955,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       await saveStudentToCloud({
         attendanceNumber: currentStudentNum,
         nickname: trimmed,
-        password: passwords[currentStudentNum] || '0000',
+        password: passwords[currentStudentNum] || currentStudent?.password || '0000',
+        avatarColor: currentStudent?.avatarColor,
+        role: currentStudent?.role,
       });
     } catch (e) {
       console.error('Failed to sync nickname to Firestore:', e);
@@ -977,9 +990,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       await saveStudentToCloud({
         attendanceNumber: currentStudentNum,
-        nickname: currentStudent?.nickname || `出席番号${currentStudentNum}番`,
+        nickname: currentStudent?.nickname || getStudentFallbackLabel(currentStudentNum),
         password: trimmed,
         hasCustomPassword: true,
+        avatarColor: currentStudent?.avatarColor,
+        role: currentStudent?.role,
       });
     } catch (e) {
       console.error('Failed to sync password to Firestore:', e);
@@ -1229,7 +1244,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const addMaterial = async (
     material: Omit<StudyMaterial, 'id' | 'createdAt' | 'downloadCount' | 'authorNickname'>
   ) => {
-    const author = currentStudent?.nickname || `出席番号${currentStudentNum}番`;
+    const author = currentStudent?.nickname || getStudentFallbackLabel(currentStudentNum);
 
     const nowMs = Date.now();
     const rawPdf = material.pdfUrl || '';
@@ -1360,7 +1375,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const addStudentPrediction = async (
     prediction: Omit<StudentPrediction, 'id' | 'createdAt' | 'downloadCount' | 'authorNickname' | 'authorStudentNumber'>
   ) => {
-    const author = currentStudent?.nickname || `出席番号${currentStudentNum}番`;
+    const author = currentStudent?.nickname || getStudentFallbackLabel(currentStudentNum);
 
     const nowMs = Date.now();
     const rawPdf = prediction.pdfUrl || '';
@@ -1476,7 +1491,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Forum (Cloud-first Firestore + IndexedDB + Server JSON)
   const addPost = async (subjectTag: string, title: string, content: string) => {
     if (!currentStudentNum) return;
-    const author = currentStudent?.nickname || `出席番号${currentStudentNum}番`;
+    const author = currentStudent?.nickname || getStudentFallbackLabel(currentStudentNum);
     const nowMs = Date.now();
     const newPost: ForumPost = {
       id: `post-user-${nowMs}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1533,7 +1548,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const target = posts.find((p) => p.id === postId);
     if (!target) return;
 
-    const author = currentStudent?.nickname || `出席番号${currentStudentNum}番`;
+    const author = currentStudent?.nickname || getStudentFallbackLabel(currentStudentNum);
     const newComment = {
       id: `c-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       studentNumber: currentStudentNum,

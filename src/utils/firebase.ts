@@ -362,20 +362,21 @@ export async function saveStudentToCloud(studentData: Partial<Student> & { atten
       password: studentData.password,
       hasCustomPassword: studentData.hasCustomPassword,
       avatarColor: studentData.avatarColor,
+      role: studentData.role,
       updatedAt: new Date().toISOString(),
     });
     const docRef = doc(db, COLLECTIONS.STUDENTS, String(studentData.attendanceNumber));
     await setDoc(docRef, payload, { merge: true });
-    console.info(`[Firebase] Saved student #${studentData.attendanceNumber} to cloud:`, studentData.nickname);
+    console.info(`[Firebase] Saved account #${studentData.attendanceNumber} to cloud:`, studentData.nickname);
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
-    console.error(`[Firebase] Failed to save student #${studentData.attendanceNumber}:`, errorMsg);
-    throw new Error(`生徒アカウントのクラウド保存エラー: ${errorMsg}`);
+    console.error(`[Firebase] Failed to save account #${studentData.attendanceNumber}:`, errorMsg);
+    throw new Error(`アカウントのクラウド保存エラー: ${errorMsg}`);
   }
 }
 
 /**
- * Fetches all student account profiles from Firebase Firestore once.
+ * Fetches all student & teacher account profiles from Firebase Firestore once.
  */
 export async function fetchStudentsFromCloud(): Promise<Partial<Student>[]> {
   try {
@@ -390,6 +391,7 @@ export async function fetchStudentsFromCloud(): Promise<Partial<Student>[]> {
           password: data.password,
           hasCustomPassword: data.hasCustomPassword,
           avatarColor: data.avatarColor,
+          role: data.role,
         });
       }
     });
@@ -402,7 +404,7 @@ export async function fetchStudentsFromCloud(): Promise<Partial<Student>[]> {
 }
 
 /**
- * Subscribes to real-time updates for student accounts across all devices.
+ * Subscribes to real-time updates for student & teacher accounts across all devices.
  */
 export function subscribeToStudents(
   onUpdate: (students: Partial<Student>[]) => void,
@@ -423,6 +425,7 @@ export function subscribeToStudents(
               password: data.password,
               hasCustomPassword: data.hasCustomPassword,
               avatarColor: data.avatarColor,
+              role: data.role,
             });
           }
         });

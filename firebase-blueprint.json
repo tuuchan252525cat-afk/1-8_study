@@ -93,6 +93,21 @@
         "createdAt": { "type": "string", "maxLength": 32 }
       },
       "required": ["id", "title", "date"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Student and teacher profiles, nicknames, passwords, and roles",
+      "type": "object",
+      "properties": {
+        "attendanceNumber": { "type": "number" },
+        "nickname": { "type": "string", "maxLength": 64 },
+        "password": { "type": "string", "maxLength": 64 },
+        "hasCustomPassword": { "type": "boolean" },
+        "avatarColor": { "type": "string", "maxLength": 16 },
+        "role": { "type": "string", "enum": ["student", "teacher"] },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["attendanceNumber", "nickname"]
     }
   },
   "firestore": {
@@ -127,6 +142,10 @@
     "/periodicTests/{testId}": {
       "schema": "PeriodicTestSchedule",
       "description": "Periodic test schedule dates for countdown"
+    },
+    "/students/{studentId}": {
+      "schema": "Student",
+      "description": "Student and teacher profiles and credentials"
     }
   }
 }

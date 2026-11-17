@@ -1,20 +1,39 @@
 import { Student, TestRecord, WeeklyQuiz, QuizResult, StudyMaterial, ForumPost } from '../types';
 
-// Attendance numbers 1 to 40 cleanly formatted with distinct avatar colors
-export const INITIAL_STUDENTS: Student[] = Array.from({ length: 40 }, (_, i) => {
-  const num = i + 1;
-  const colors = [
-    '#38bdf8', '#34d399', '#fbbf24', '#f87171', '#818cf8',
-    '#2dd4bf', '#a78bfa', '#f472b6', '#60a5fa', '#4ade80',
-    '#fb923c', '#0284c7', '#f43f5e', '#facc15', '#0ea5e9',
-    '#d97706', '#8b5cf6', '#f59e0b', '#10b981', '#ec4899'
-  ];
-  return {
-    attendanceNumber: num,
-    nickname: `生徒 ${num}番`,
-    avatarColor: colors[(num - 1) % colors.length],
-  };
-});
+export const TEACHER_ACCOUNTS: Student[] = [
+  {
+    attendanceNumber: 101,
+    nickname: '先生（担任）',
+    avatarColor: '#1c603a',
+    role: 'teacher',
+  },
+  {
+    attendanceNumber: 102,
+    nickname: '先生（副担任）',
+    avatarColor: '#0f766e',
+    role: 'teacher',
+  },
+];
+
+// Attendance numbers 1 to 40 cleanly formatted with distinct avatar colors + 2 teacher accounts
+export const INITIAL_STUDENTS: Student[] = [
+  ...Array.from({ length: 40 }, (_, i) => {
+    const num = i + 1;
+    const colors = [
+      '#38bdf8', '#34d399', '#fbbf24', '#f87171', '#818cf8',
+      '#2dd4bf', '#a78bfa', '#f472b6', '#60a5fa', '#4ade80',
+      '#fb923c', '#0284c7', '#f43f5e', '#facc15', '#0ea5e9',
+      '#d97706', '#8b5cf6', '#f59e0b', '#10b981', '#ec4899'
+    ];
+    return {
+      attendanceNumber: num,
+      nickname: `生徒 ${num}番`,
+      avatarColor: colors[(num - 1) % colors.length],
+      role: 'student' as const,
+    };
+  }),
+  ...TEACHER_ACCOUNTS,
+];
 
 // All sample/mock test records deleted (empty array for clean user entry)
 export const INITIAL_TEST_RECORDS: TestRecord[] = [];

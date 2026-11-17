@@ -222,11 +222,19 @@ export const ForumView: React.FC = () => {
                   <div className="text-[11px] font-black text-stone-400 uppercase tracking-tight flex items-center gap-1.5 flex-wrap">
                     <span>{new Date(post.createdAt).toLocaleDateString('ja-JP')}</span>
                     <span aria-hidden="true">·</span>
-                    <span>
-                      投稿者:{' '}
-                      {(post.studentNumber &&
-                        students.find((s) => s.attendanceNumber === post.studentNumber)?.nickname) ||
-                        post.authorNickname}
+                    <span className="flex items-center gap-1">
+                      <span>投稿者:</span>
+                      <span className="text-slate-800 font-bold">
+                        {(post.studentNumber &&
+                          students.find((s) => s.attendanceNumber === post.studentNumber)?.nickname) ||
+                          post.authorNickname}
+                      </span>
+                      {((post.studentNumber && post.studentNumber >= 100) ||
+                        students.find((s) => s.attendanceNumber === post.studentNumber)?.role === 'teacher') && (
+                        <span className="px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-800 text-[9px] font-black border border-amber-300">
+                          先生
+                        </span>
+                      )}
                     </span>
                     {isItemUnseenNew(post, initialLastSeenRef.current) && (
                       <span className="px-1.5 py-0.5 rounded-md bg-rose-500 text-white text-[9px] font-black tracking-normal">
@@ -309,11 +317,18 @@ export const ForumView: React.FC = () => {
                         {post.comments.map((comment) => (
                           <div key={comment.id} className="text-xs space-y-1">
                             <div className="flex items-center gap-2 text-[11px] text-stone-400 font-bold">
-                              <span className="text-slate-800 font-black">
+                              <span className="text-slate-800 font-black flex items-center gap-1">
                                 {(comment.studentNumber &&
                                   students.find((s) => s.attendanceNumber === comment.studentNumber)
                                     ?.nickname) ||
                                   comment.authorNickname}
+                                {((comment.studentNumber && comment.studentNumber >= 100) ||
+                                  students.find((s) => s.attendanceNumber === comment.studentNumber)?.role ===
+                                    'teacher') && (
+                                  <span className="px-1 py-0.2 rounded bg-amber-100 text-amber-800 text-[9px] font-black border border-amber-300">
+                                    先生
+                                  </span>
+                                )}
                               </span>
                               <span aria-hidden="true">·</span>
                               <span>

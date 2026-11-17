@@ -95,20 +95,26 @@ export const MyPageView: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-stone-100">
           <div className="flex items-center gap-3.5">
             <span
-              className="w-13 h-13 rounded-2xl flex items-center justify-center text-white text-lg font-black shadow-xs shrink-0"
+              className={`w-13 h-13 rounded-2xl flex items-center justify-center text-white font-black shadow-xs shrink-0 ${
+                currentStudent.role === 'teacher' ? 'text-sm' : 'text-lg'
+              }`}
               style={{ backgroundColor: currentStudent.avatarColor }}
             >
-              {currentStudent.attendanceNumber}
+              {currentStudent.role === 'teacher' ? '先生' : currentStudent.attendanceNumber}
             </span>
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-black text-slate-900">{currentStudent.nickname}</h2>
                 <span className="text-xs font-black text-[#1c603a] bg-[#f4f8f5] px-2.5 py-1 rounded-full border border-[#1c603a]/20">
-                  出席番号 {currentStudent.attendanceNumber}番
+                  {currentStudent.role === 'teacher'
+                    ? '先生用アカウント'
+                    : `出席番号 ${currentStudent.attendanceNumber}番`}
                 </span>
               </div>
               <div className="text-[11px] text-stone-500 font-bold mt-0.5">
-                ◎ 1年8組 生徒専用アカウント
+                {currentStudent.role === 'teacher'
+                  ? '◎ 1年8組 先生専用アカウント'
+                  : '◎ 1年8組 生徒専用アカウント'}
               </div>
             </div>
           </div>

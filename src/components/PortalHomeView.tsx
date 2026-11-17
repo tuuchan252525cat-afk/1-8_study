@@ -148,7 +148,7 @@ export const PortalHomeView: React.FC = () => {
                 className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] text-white font-black"
                 style={{ backgroundColor: currentStudent.avatarColor }}
               >
-                {currentStudent.attendanceNumber}
+                {currentStudent.role === 'teacher' ? '先' : currentStudent.attendanceNumber}
               </span>
               <span>ログイン中: {currentStudent.nickname}</span>
             </div>
@@ -387,7 +387,7 @@ export const PortalHomeView: React.FC = () => {
               マイページ
             </h2>
             <p className="text-xs font-semibold text-slate-500">
-              出席番号・表示名・パスワード・個人の成績状況の確認
+              アカウント・表示名・パスワード・個人の成績状況の確認
             </p>
           </button>
 

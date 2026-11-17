@@ -1810,10 +1810,19 @@ export const PeriodicPredictedQuestionsView: React.FC = () => {
                               {pred.title}
                             </h3>
 
-                            <div className="text-[11px] text-[#1c603a] font-black flex items-center gap-1 mt-0.5">
+                            <div className="text-[11px] text-[#1c603a] font-black flex items-center gap-1 mt-0.5 flex-wrap">
                               <span>◎ {subjectsConfig.find((s) => s.key === pred.subject)?.label}</span>
                               <span aria-hidden="true">·</span>
-                              <span className="text-stone-500 font-bold truncate">{authorName}</span>
+                              <span className="text-stone-500 font-bold truncate flex items-center gap-1">
+                                {authorName}
+                                {((pred.authorStudentNumber && pred.authorStudentNumber >= 100) ||
+                                  students.find((s) => s.attendanceNumber === pred.authorStudentNumber)?.role ===
+                                    'teacher') && (
+                                  <span className="px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-800 text-[9px] font-black border border-amber-300">
+                                    先生
+                                  </span>
+                                )}
+                              </span>
                             </div>
                           </div>
                         </div>

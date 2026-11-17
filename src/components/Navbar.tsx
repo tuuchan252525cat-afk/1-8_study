@@ -151,7 +151,7 @@ export const Navbar: React.FC = () => {
                     className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] text-white font-bold shrink-0"
                     style={{ backgroundColor: currentStudent.avatarColor }}
                   >
-                    {currentStudent.attendanceNumber}
+                    {currentStudent.role === 'teacher' ? '先' : currentStudent.attendanceNumber}
                   </span>
                   <span className="font-bold text-slate-800 truncate max-w-[65px] sm:max-w-[90px]">
                     {currentStudent.nickname}

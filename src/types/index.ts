@@ -12,9 +12,10 @@ export type SubjectKey =
   | 'other';
 
 export interface Student {
-  attendanceNumber: number; // 1 to 40
+  attendanceNumber: number; // 1 to 40 (students), 101 to 102 (teachers)
   nickname: string;
   avatarColor: string;
+  role?: 'student' | 'teacher';
   hasCustomPassword?: boolean;
   password?: string;
 }

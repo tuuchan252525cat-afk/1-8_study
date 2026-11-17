@@ -36,10 +36,10 @@ export const LoginView: React.FC = () => {
 
           <div className="space-y-0.5 pt-2">
             <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-              1年8組 生徒ログイン
+              1年8組 ログイン
             </h1>
             <p className="text-xs text-stone-500 font-medium">
-              出席番号とパスワードを入力して入室してください。
+              出席番号（または先生用アカウント）とパスワードを入力して入室してください。
             </p>
           </div>
         </div>
@@ -62,18 +62,24 @@ export const LoginView: React.FC = () => {
           <div>
             <label className="block text-xs font-black text-slate-700 mb-1.5 flex items-center gap-1.5">
               <UserCheck className="w-4 h-4 text-[#1c603a]" />
-              <span>出席番号</span>
+              <span>出席番号・アカウント</span>
             </label>
             <select
               value={studentNum}
               onChange={(e) => setStudentNum(Number(e.target.value))}
               className="w-full text-sm font-black border border-stone-300 rounded-2xl p-3 bg-[#fdfbf7] focus:bg-white focus:outline-none focus:border-[#1c603a] transition-all cursor-pointer shadow-2xs"
             >
-              {Array.from({ length: 40 }, (_, i) => i + 1).map((num) => (
-                <option key={num} value={num}>
-                  出席番号 {num}番
-                </option>
-              ))}
+              <optgroup label="生徒（出席番号）">
+                {Array.from({ length: 40 }, (_, i) => i + 1).map((num) => (
+                  <option key={num} value={num}>
+                    出席番号 {num}番
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="先生用アカウント">
+                <option value={101}>先生用アカウント 1</option>
+                <option value={102}>先生用アカウント 2</option>
+              </optgroup>
             </select>
           </div>
 

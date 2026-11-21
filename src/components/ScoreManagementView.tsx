@@ -145,10 +145,19 @@ export const ScoreManagementView: React.FC = () => {
                 {(() => {
                   let userRankShown = false;
                   return anonymousRankings.map((item, index) => {
+                    const itemMax = item.maxScore && item.maxScore > 0 ? item.maxScore : 500;
+                    const itemRate =
+                      item.scoreRate !== undefined
+                        ? item.scoreRate
+                        : Math.round((item.score / itemMax) * 1000) / 10;
+
                     const isMatch =
-                      personalStanding.totalScore > 0 &&
+                      personalStanding.rank > 0 &&
                       personalStanding.rank === item.rank &&
-                      personalStanding.totalScore === item.score;
+                      personalStanding.totalScore === item.score &&
+                      (!personalStanding.totalMaxScore ||
+                        !item.maxScore ||
+                        personalStanding.totalMaxScore === item.maxScore);
                     const isMyScore = isMatch && !userRankShown;
                     if (isMyScore) userRankShown = true;
 
@@ -156,7 +165,7 @@ export const ScoreManagementView: React.FC = () => {
 
                     return (
                       <div
-                        key={`rank-${index}-${item.score}`}
+                        key={`rank-${index}-${item.score}-${itemMax}`}
                         className={`p-3.5 sm:p-4 rounded-2xl border transition-all flex items-center gap-3.5 ${
                           isMyScore
                             ? 'bg-[#f4f8f5] border-[#1c603a] ring-2 ring-[#1c603a]/20 shadow-xs'
@@ -184,9 +193,12 @@ export const ScoreManagementView: React.FC = () => {
                           <div className="text-[11px] font-black text-stone-400 uppercase tracking-tight">
                             TOTAL SCORE
                           </div>
-                          <div className="flex items-baseline gap-2">
+                          <div className="flex items-baseline gap-2 flex-wrap">
                             <span className="text-base sm:text-lg font-black text-slate-900 tabular-nums">
-                              {item.score} <span className="text-xs font-bold text-stone-500">点</span>
+                              {item.score}{' '}
+                              <span className="text-xs font-bold text-stone-500">
+                                / {itemMax}点
+                              </span>
                             </span>
                             {isMyScore && (
                               <span className="text-[10px] font-black text-white bg-[#1c603a] px-2 py-0.5 rounded-full">
@@ -197,7 +209,7 @@ export const ScoreManagementView: React.FC = () => {
                           <div className="text-[11px] text-stone-500 font-bold mt-0.5 flex items-center gap-1">
                             <span>◎ 1年8組</span>
                             <span aria-hidden="true">·</span>
-                            <span>得点率 {Math.round((item.score / 500) * 100)}%</span>
+                            <span>得点率 {itemRate}%</span>
                           </div>
                         </div>
 
@@ -212,7 +224,7 @@ export const ScoreManagementView: React.FC = () => {
                                   ? 'bg-amber-400'
                                   : 'bg-slate-700'
                               }`}
-                              style={{ width: `${Math.min(100, Math.max(5, (item.score / 500) * 100))}%` }}
+                              style={{ width: `${Math.min(100, Math.max(5, itemRate))}%` }}
                             />
                           </div>
                         </div>
@@ -237,7 +249,7 @@ export const ScoreManagementView: React.FC = () => {
                 const maxCount = Math.max(...scoreDistribution.map((b) => b.count), 1);
                 const percent = (bin.count / maxCount) * 100;
                 const isMyBin =
-                  personalStanding.totalScore > 0 &&
+                  personalStanding.rank > 0 &&
                   personalStanding.totalScore >= bin.min &&
                   personalStanding.totalScore <= bin.max;
 
@@ -295,6 +307,12 @@ export const ScoreManagementView: React.FC = () => {
                     personalStanding.growthRank === item.rank &&
                     personalStanding.growthDelta === item.delta;
 
+                  const deltaLabel = item.delta > 0 ? `+${item.delta}` : `${item.delta}`;
+                  const rateLabel =
+                    item.rateDelta !== undefined
+                      ? `得点率 ${item.rateDelta > 0 ? `+${item.rateDelta}` : item.rateDelta}%`
+                      : null;
+
                   return (
                     <div
                       key={`growth-${index}`}
@@ -317,11 +335,22 @@ export const ScoreManagementView: React.FC = () => {
                         </div>
 
                         <div>
-                          <div className="flex items-baseline gap-1.5">
-                            <span className="text-base font-black text-[#1c603a] tabular-nums">
-                              +{item.delta}
+                          <div className="flex items-baseline gap-1.5 flex-wrap">
+                            <span
+                              className={`text-base font-black tabular-nums ${
+                                item.delta >= 0 ? 'text-[#1c603a]' : 'text-rose-600'
+                              }`}
+                            >
+                              {deltaLabel}
                             </span>
-                            <span className="text-xs font-bold text-stone-500">点アップ</span>
+                            <span className="text-xs font-bold text-stone-500">
+                              {item.delta > 0 ? '点アップ' : '点'}
+                            </span>
+                            {rateLabel && (
+                              <span className="text-[11px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.5 rounded-md tabular-nums">
+                                {rateLabel}
+                              </span>
+                            )}
                             {isMyGrowth && (
                               <span className="text-[10px] font-black text-white bg-[#1c603a] px-2 py-0.5 rounded-full ml-1">
                                 あなた

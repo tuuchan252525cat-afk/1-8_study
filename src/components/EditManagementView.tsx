@@ -861,7 +861,7 @@ export const EditManagementView: React.FC = () => {
                       <div>
                         <h4 className="text-sm font-black text-slate-900">{title}</h4>
                         <span className="text-[11px] font-semibold text-slate-500">
-                          5教科（国・数・英・理・社）各100点 満点500点
+                          各教科ごとに満点設定が可能（初期設定: 100点満点）
                         </span>
                       </div>
                     </div>

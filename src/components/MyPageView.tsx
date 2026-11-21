@@ -207,8 +207,8 @@ export const MyPageView: React.FC = () => {
           </span>
         </div>
 
-        {/* Top 2 Metric Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+        {/* Top 3 Metric Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
           <div className="bg-[#fdfbf7] rounded-2xl p-4 sm:p-5 border border-stone-200/90 shadow-2xs">
             <div className="flex items-center gap-2.5 mb-2">
               <div className="w-9 h-9 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center">
@@ -222,11 +222,31 @@ export const MyPageView: React.FC = () => {
                 / {personalStanding.totalParticipants}人中
               </span>
             </div>
-            {personalStanding.totalParticipants > 0 && (
+            {personalStanding.totalParticipants > 0 && personalStanding.rank > 0 && (
               <p className="text-[11px] text-[#1c603a] font-black mt-1">
                 ◎ 上位 {Math.round((personalStanding.rank / personalStanding.totalParticipants) * 100)}%
               </p>
             )}
+          </div>
+
+          <div className="bg-[#fdfbf7] rounded-2xl p-4 sm:p-5 border border-stone-200/90 shadow-2xs">
+            <div className="flex items-center gap-2.5 mb-2">
+              <div className="w-9 h-9 rounded-2xl bg-sky-50 border border-sky-200 text-sky-600 flex items-center justify-center">
+                <BookOpen className="w-5 h-5" />
+              </div>
+              <span className="text-xs font-black text-slate-800">合計得点</span>
+            </div>
+            <div className="text-2xl font-black text-slate-900 tabular-nums">
+              {personalStanding.rank > 0 ? personalStanding.totalScore : '-'}
+              <span className="text-xs font-bold text-stone-500 ml-1">
+                / {personalStanding.totalMaxScore || 500}点満点
+              </span>
+            </div>
+            <p className="text-[11px] text-[#1c603a] font-black mt-1 tabular-nums">
+              {personalStanding.rank > 0 && personalStanding.scoreRate !== undefined
+                ? `◎ 得点率 ${personalStanding.scoreRate}% (平均 ${personalStanding.classAverage}点)`
+                : '◎ 点数を記録すると集計されます'}
+            </p>
           </div>
 
           <div className="bg-[#fdfbf7] rounded-2xl p-4 sm:p-5 border border-stone-200/90 shadow-2xs">
@@ -241,7 +261,11 @@ export const MyPageView: React.FC = () => {
                 <>
                   {personalStanding.growthRank}
                   <span className="text-xs font-bold text-stone-500 ml-1">
-                    位 ({personalStanding.growthDelta && personalStanding.growthDelta > 0 ? `+${personalStanding.growthDelta}` : personalStanding.growthDelta}点)
+                    位 ({personalStanding.growthDelta && personalStanding.growthDelta > 0 ? `+${personalStanding.growthDelta}` : personalStanding.growthDelta}点
+                    {personalStanding.growthRateDelta !== undefined
+                      ? ` / ${personalStanding.growthRateDelta > 0 ? `+${personalStanding.growthRateDelta}` : personalStanding.growthRateDelta}%`
+                      : ''}
+                    )
                   </span>
                 </>
               ) : (

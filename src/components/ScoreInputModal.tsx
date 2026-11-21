@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
-import { X, Check, Edit3, CheckSquare, Square, Plus, Trash2 } from 'lucide-react';
+import { X, Check, Edit3, CheckSquare, Square, Plus, Trash2, AlertCircle } from 'lucide-react';
 import { SubjectScores } from '../types';
 
 interface Props {
@@ -25,6 +25,7 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
   // New Custom Subject inline modal state
   const [isAddSubjectOpen, setIsAddSubjectOpen] = useState(false);
   const [customSubjectInput, setCustomSubjectInput] = useState('');
+  const [customSubjectMaxInput, setCustomSubjectMaxInput] = useState('100');
 
   // Track which subjects are included in this test
   const [selectedSubjects, setSelectedSubjects] = useState<Record<string, boolean>>({
@@ -43,41 +44,116 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
     history: 78,
   });
 
+  const [subjectMaxScores, setSubjectMaxScores] = useState<Record<string, number>>({
+    japanese: 100,
+    math: 100,
+    english: 100,
+    geography: 100,
+    history: 100,
+  });
+
+  // Draft input strings so users can clear & retype numbers cleanly without jumping
+  const [scoreInputs, setScoreInputs] = useState<Record<string, string>>({});
+  const [maxScoreInputs, setMaxScoreInputs] = useState<Record<string, string>>({});
+
+  const [validationNotice, setValidationNotice] = useState<string | null>(null);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  // Sync scores and subject selection when test title or student record changes
+  // Track last initialized context so adding a custom subject doesn't reset unsaved edits
+  const lastInitKeyRef = useRef<string>('');
+
+  // Reset initialization marker when modal closes
   useEffect(() => {
-    if (!currentStudent) return;
+    if (!isOpen) {
+      lastInitKeyRef.current = '';
+      setValidationNotice(null);
+    }
+  }, [isOpen]);
+
+  // Sync scores, maxScores, and subject selection when modal opens or testTitle / student changes
+  useEffect(() => {
+    if (!isOpen || !currentStudent) return;
+
     const existing = testRecords.find(
       (r) => r.testTitle === testTitle && r.studentNumber === currentStudent.attendanceNumber
     );
+    const initKey = `${testTitle}::${currentStudent.attendanceNumber}::${existing?.updatedAt || existing?.id || 'none'}`;
+    if (lastInitKeyRef.current === initKey) {
+      // Only ensure any newly added custom subjects exist in maps without resetting user edits
+      setSubjectScores((prev) => {
+        const next = { ...prev };
+        allSubjects.forEach((s) => {
+          if (next[s.key] === undefined) next[s.key] = 80;
+        });
+        return next;
+      });
+      setSubjectMaxScores((prev) => {
+        const next = { ...prev };
+        allSubjects.forEach((s) => {
+          if (next[s.key] === undefined) next[s.key] = 100;
+        });
+        return next;
+      });
+      return;
+    }
+
+    lastInitKeyRef.current = initKey;
 
     const newSel: Record<string, boolean> = {};
     const newScores: Record<string, number> = {};
+    const newMaxScores: Record<string, number> = {};
+    const newScoreInputs: Record<string, string> = {};
+    const newMaxInputs: Record<string, string> = {};
 
     if (existing && existing.scores) {
+      if (existing.testDate) {
+        setTestDate(existing.testDate);
+      }
       allSubjects.forEach((subj) => {
         const val = existing.scores[subj.key as keyof SubjectScores];
+        const detailMax = existing.subjectDetails?.find(
+          (d) => d.subjectKey === subj.key || d.subject === subj.label
+        )?.maxScore;
+        const storedMax = existing.maxScores?.[subj.key as keyof SubjectScores] ?? detailMax;
+        const resolvedMax =
+          storedMax !== undefined && storedMax !== null && Number(storedMax) >= 1
+            ? Math.floor(Number(storedMax))
+            : 100;
+
         if (val !== undefined && val !== null) {
+          const clampedScore = Math.max(0, Math.min(resolvedMax, Number(val)));
           newSel[subj.key] = true;
-          newScores[subj.key] = Number(val);
+          newScores[subj.key] = clampedScore;
+          newMaxScores[subj.key] = resolvedMax;
+          newScoreInputs[subj.key] = String(clampedScore);
+          newMaxInputs[subj.key] = String(resolvedMax);
         } else {
           newSel[subj.key] = false;
           newScores[subj.key] = 80;
+          newMaxScores[subj.key] = 100;
+          newScoreInputs[subj.key] = '80';
+          newMaxInputs[subj.key] = '100';
         }
       });
     } else {
-      // Default selection (5 main subjects)
+      // Default selection (5 main subjects, 100 points max each)
       allSubjects.forEach((subj) => {
         const isDefaultMain = ['japanese', 'math', 'english', 'geography', 'history'].includes(subj.key);
         newSel[subj.key] = isDefaultMain;
         newScores[subj.key] = 80;
+        newMaxScores[subj.key] = 100;
+        newScoreInputs[subj.key] = '80';
+        newMaxInputs[subj.key] = '100';
       });
     }
 
     setSelectedSubjects(newSel);
     setSubjectScores(newScores);
-  }, [testTitle, testRecords, currentStudent, allSubjects]);
+    setSubjectMaxScores(newMaxScores);
+    setScoreInputs(newScoreInputs);
+    setMaxScoreInputs(newMaxInputs);
+    setValidationNotice(null);
+  }, [isOpen, testTitle, testRecords, currentStudent, allSubjects]);
 
   if (!isOpen) return null;
 
@@ -86,11 +162,95 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
       ...prev,
       [key]: !prev[key],
     }));
+    setValidationNotice(null);
   };
 
-  const handleScoreChange = (key: string, val: number) => {
-    const clamped = Math.max(0, Math.min(100, val));
-    setSubjectScores((prev) => ({ ...prev, [key]: clamped }));
+  const handleScoreInputChange = (key: string, raw: string, label: string) => {
+    if (raw === '') {
+      setScoreInputs((prev) => ({ ...prev, [key]: '' }));
+      setSubjectScores((prev) => ({ ...prev, [key]: 0 }));
+      setValidationNotice(null);
+      return;
+    }
+
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return;
+
+    const maxVal = Math.max(1, subjectMaxScores[key] ?? 100);
+    if (parsed < 0) {
+      setSubjectScores((prev) => ({ ...prev, [key]: 0 }));
+      setScoreInputs((prev) => ({ ...prev, [key]: '0' }));
+      setValidationNotice(`「${label}」の得点は0点以上で入力してください。`);
+      return;
+    }
+
+    if (parsed > maxVal) {
+      setSubjectScores((prev) => ({ ...prev, [key]: maxVal }));
+      setScoreInputs((prev) => ({ ...prev, [key]: String(maxVal) }));
+      setValidationNotice(`「${label}」の得点が満点（${maxVal}点）を超えたため、上限値（${maxVal}点）に調整しました。`);
+      return;
+    }
+
+    const floored = Math.floor(parsed);
+    setSubjectScores((prev) => ({ ...prev, [key]: floored }));
+    setScoreInputs((prev) => ({ ...prev, [key]: String(floored) }));
+    setValidationNotice(null);
+  };
+
+  const handleScoreBlur = (key: string) => {
+    const raw = scoreInputs[key];
+    if (raw === undefined || raw === '') {
+      setScoreInputs((prev) => ({ ...prev, [key]: '0' }));
+      setSubjectScores((prev) => ({ ...prev, [key]: 0 }));
+    }
+  };
+
+  const handleMaxScoreInputChange = (key: string, raw: string, label: string) => {
+    setMaxScoreInputs((prev) => ({ ...prev, [key]: raw }));
+
+    if (raw === '') {
+      setValidationNotice(`「${label}」の満点は1以上の数値を入力してください。`);
+      return;
+    }
+
+    const parsed = Math.floor(Number(raw));
+    if (!Number.isFinite(parsed)) return;
+
+    if (parsed < 1) {
+      setValidationNotice(`「${label}」の満点は1以上の数値のみ設定できます。`);
+      return;
+    }
+
+    setSubjectMaxScores((prev) => ({ ...prev, [key]: parsed }));
+
+    // Clamp existing score if it now exceeds the reduced maxScore
+    const currentScore = subjectScores[key] ?? 0;
+    if (currentScore > parsed) {
+      setSubjectScores((prev) => ({ ...prev, [key]: parsed }));
+      setScoreInputs((prev) => ({ ...prev, [key]: String(parsed) }));
+      setValidationNotice(
+        `「${label}」の満点を${parsed}点に変更したため、得点を上限の${parsed}点に調整しました。`
+      );
+    } else {
+      setValidationNotice(null);
+    }
+  };
+
+  const handleMaxScoreBlur = (key: string) => {
+    const raw = maxScoreInputs[key];
+    const parsed = Math.floor(Number(raw));
+    if (raw === undefined || raw === '' || !Number.isFinite(parsed) || parsed < 1) {
+      const fallback = raw === '' ? 100 : 1;
+      setSubjectMaxScores((prev) => ({ ...prev, [key]: fallback }));
+      setMaxScoreInputs((prev) => ({ ...prev, [key]: String(fallback) }));
+      if ((subjectScores[key] ?? 0) > fallback) {
+        setSubjectScores((prev) => ({ ...prev, [key]: fallback }));
+        setScoreInputs((prev) => ({ ...prev, [key]: String(fallback) }));
+      }
+      setValidationNotice(null);
+    } else {
+      setMaxScoreInputs((prev) => ({ ...prev, [key]: String(parsed) }));
+    }
   };
 
   // User adds custom subject
@@ -99,14 +259,23 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
     const trimmed = customSubjectInput.trim();
     if (!trimmed) return;
 
+    const parsedMax = Math.floor(Number(customSubjectMaxInput));
+    const initialMax = Number.isFinite(parsedMax) && parsedMax >= 1 ? parsedMax : 100;
+    const initialScore = Math.min(80, initialMax);
+
     const newOption = addCustomSubject(trimmed);
 
-    // Automatically check & initialize score for new custom subject
+    // Automatically check & initialize score + maxScore for new custom subject
     setSelectedSubjects((prev) => ({ ...prev, [newOption.key]: true }));
-    setSubjectScores((prev) => ({ ...prev, [newOption.key]: 80 }));
+    setSubjectMaxScores((prev) => ({ ...prev, [newOption.key]: initialMax }));
+    setMaxScoreInputs((prev) => ({ ...prev, [newOption.key]: String(initialMax) }));
+    setSubjectScores((prev) => ({ ...prev, [newOption.key]: initialScore }));
+    setScoreInputs((prev) => ({ ...prev, [newOption.key]: String(initialScore) }));
 
     setCustomSubjectInput('');
+    setCustomSubjectMaxInput('100');
     setIsAddSubjectOpen(false);
+    setValidationNotice(null);
   };
 
   // Presets
@@ -114,6 +283,7 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
     const newSel: Record<string, boolean> = {};
     allSubjects.forEach((s) => { newSel[s.key] = true; });
     setSelectedSubjects(newSel);
+    setValidationNotice(null);
   };
 
   const selectFiveMain = () => {
@@ -122,31 +292,56 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
       newSel[s.key] = ['japanese', 'math', 'english', 'geography', 'history'].includes(s.key);
     });
     setSelectedSubjects(newSel);
+    setValidationNotice(null);
   };
 
   // Calculate totals for active selected subjects only
-  const activeKeys = allSubjects.filter((s) => selectedSubjects[s.key]).map((s) => s.key);
+  const activeSubjects = allSubjects.filter((s) => selectedSubjects[s.key]);
+  const activeKeys = activeSubjects.map((s) => s.key);
   const activeCount = activeKeys.length;
-  const maxTotalScore = activeCount * 100;
+
+  const hasInvalidMax = activeSubjects.some((subj) => {
+    const raw = maxScoreInputs[subj.key];
+    if (raw === '') return true;
+    if (raw !== undefined) {
+      const n = Math.floor(Number(raw));
+      return !Number.isFinite(n) || n < 1;
+    }
+    return (subjectMaxScores[subj.key] ?? 100) < 1;
+  });
+
+  const maxTotalScore = activeKeys.reduce<number>(
+    (acc, k) => acc + Math.max(1, subjectMaxScores[k] ?? 100),
+    0
+  );
 
   const currentTotalScore = activeKeys.reduce<number>(
-    (acc, k) => acc + (subjectScores[k] ?? 0),
+    (acc, k) => acc + Math.min(subjectScores[k] ?? 0, Math.max(1, subjectMaxScores[k] ?? 100)),
     0
   );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (activeCount === 0) {
-      alert('少なくとも1教科を選択してください。');
+      setValidationNotice('少なくとも1教科を選択してください。');
+      return;
+    }
+
+    if (hasInvalidMax) {
+      setValidationNotice('選択中の教科の満点はすべて1以上の数値を入力してください。');
       return;
     }
 
     const finalScores: SubjectScores = {};
+    const finalMaxScores: SubjectScores = {};
     activeKeys.forEach((key) => {
-      finalScores[key as keyof SubjectScores] = subjectScores[key] ?? 0;
+      const maxVal = Math.max(1, Math.floor(subjectMaxScores[key] ?? 100));
+      const scoreVal = Math.max(0, Math.min(maxVal, Math.floor(subjectScores[key] ?? 0)));
+      finalScores[key as keyof SubjectScores] = scoreVal;
+      finalMaxScores[key as keyof SubjectScores] = maxVal;
     });
 
-    saveMyScore(testTitle, testDate, finalScores);
+    saveMyScore(testTitle, testDate, finalScores, finalMaxScores);
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);
@@ -178,7 +373,7 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
         </div>
 
         <p className="text-xs text-stone-500 mb-4 leading-relaxed font-medium">
-          テストに含まれる教科を選択し、得点を入力してください。ユーザー独自のカスタム教科も自由に追加できます。
+          テストに含まれる教科を選択し、得点と各教科の満点（初期値100点）を入力してください。独自教科も自由に追加できます。
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-5">
@@ -233,7 +428,7 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
           <div className="space-y-2 pt-2 border-t border-stone-100">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <span className="text-xs font-black text-slate-800">
-                ◎ テスト教科の選択 ＆ 得点入力
+                ◎ テスト教科の選択 ＆ 得点・満点入力
               </span>
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
                 <button
@@ -261,6 +456,13 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
               </div>
             </div>
 
+            {validationNotice && (
+              <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-bold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>{validationNotice}</span>
+              </div>
+            )}
+
             {/* Modal to create a new custom subject */}
             {isAddSubjectOpen && (
               <div className="bg-[#fdfbf7] p-4 rounded-2xl border-2 border-[#1c603a] space-y-2.5 my-2 animate-fadeIn shadow-xs">
@@ -271,12 +473,12 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
                   <button
                     type="button"
                     onClick={() => setIsAddSubjectOpen(false)}
-                    className="text-stone-400 hover:text-slate-800"
+                    className="text-stone-400 hover:text-slate-800 cursor-pointer"
                   >
                     <X className="w-4 h-4" />
                   </button>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                   <input
                     type="text"
                     placeholder="例: 情報Ⅰ、保健体育、プログラミング"
@@ -285,13 +487,27 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
                     className="flex-1 text-xs border border-stone-300 rounded-xl p-2.5 bg-white font-bold focus:outline-none focus:border-[#1c603a]"
                     autoFocus
                   />
-                  <button
-                    type="button"
-                    onClick={handleCreateCustomSubject}
-                    className="px-4 py-2.5 bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black rounded-xl shadow-xs transition-colors shrink-0 cursor-pointer"
-                  >
-                    追加する
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 bg-white border border-stone-300 rounded-xl px-2.5 py-1.5">
+                      <span className="text-[11px] font-bold text-stone-500 shrink-0">満点</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={customSubjectMaxInput}
+                        onChange={(e) => setCustomSubjectMaxInput(e.target.value)}
+                        className="w-14 text-center text-xs font-black focus:outline-none tabular-nums"
+                        aria-label="追加教科の満点"
+                      />
+                      <span className="text-[11px] font-bold text-stone-400 shrink-0">点</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCreateCustomSubject}
+                      className="px-4 py-2.5 bg-[#1c603a] hover:bg-[#154a2c] text-white text-xs font-black rounded-xl shadow-xs transition-colors shrink-0 cursor-pointer"
+                    >
+                      追加する
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -301,13 +517,20 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
               {allSubjects.map((subj) => {
                 const isChecked = Boolean(selectedSubjects[subj.key]);
                 const scoreVal = subjectScores[subj.key] ?? 0;
+                const maxVal = subjectMaxScores[subj.key] ?? 100;
+                const rawMaxStr = maxScoreInputs[subj.key];
+                const isMaxInvalid =
+                  rawMaxStr === '' ||
+                  (rawMaxStr !== undefined && (!Number.isFinite(Number(rawMaxStr)) || Number(rawMaxStr) < 1));
 
                 return (
                   <div
                     key={subj.key}
-                    className={`p-3 rounded-2xl border transition-all relative group ${
+                    className={`p-2.5 sm:p-3 rounded-2xl border transition-all relative group ${
                       isChecked
-                        ? 'bg-white border-[#1c603a] ring-2 ring-[#1c603a]/20 shadow-xs'
+                        ? isMaxInvalid
+                          ? 'bg-white border-rose-400 ring-2 ring-rose-200 shadow-xs'
+                          : 'bg-white border-[#1c603a] ring-2 ring-[#1c603a]/20 shadow-xs'
                         : 'bg-[#fdfbf7] border-stone-200 opacity-60'
                     }`}
                   >
@@ -315,7 +538,7 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
                       <button
                         type="button"
                         onClick={() => toggleSubjectSelection(subj.key)}
-                        className="flex-1 flex items-center justify-between text-left cursor-pointer mr-1"
+                        className="flex-1 flex items-center justify-between text-left cursor-pointer mr-1 min-w-0"
                       >
                         <span
                           className={`text-xs font-black line-clamp-1 transition-colors ${
@@ -335,7 +558,7 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
                         <button
                           type="button"
                           onClick={() => deleteCustomSubject(subj.key)}
-                          className="text-stone-300 hover:text-rose-600 p-0.5 rounded transition-colors"
+                          className="text-stone-300 hover:text-rose-600 p-0.5 rounded transition-colors cursor-pointer"
                           title="このカスタム教科を削除"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -344,17 +567,40 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
                     </div>
 
                     {isChecked ? (
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={scoreVal}
-                          onChange={(e) => handleScoreChange(subj.key, Number(e.target.value))}
-                          className="w-full text-center text-sm font-black border border-stone-300 rounded-xl p-1.5 bg-stone-50 focus:bg-white focus:outline-none focus:border-[#1c603a] tabular-nums"
-                          required
-                        />
-                        <span className="text-[11px] font-black text-stone-400">点</span>
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[10px] font-bold text-stone-400 px-0.5">
+                          <span>得点</span>
+                          <span>満点</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min={0}
+                            max={maxVal}
+                            value={scoreInputs[subj.key] ?? String(scoreVal)}
+                            onChange={(e) => handleScoreInputChange(subj.key, e.target.value, subj.label)}
+                            onBlur={() => handleScoreBlur(subj.key)}
+                            aria-label={`${subj.label}の得点`}
+                            className="flex-1 min-w-0 text-center text-xs sm:text-sm font-black border border-stone-300 rounded-xl px-1 py-1.5 bg-stone-50 focus:bg-white focus:outline-none focus:border-[#1c603a] tabular-nums"
+                            required
+                          />
+                          <span className="text-xs font-black text-stone-400 shrink-0">/</span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={maxScoreInputs[subj.key] ?? String(maxVal)}
+                            onChange={(e) => handleMaxScoreInputChange(subj.key, e.target.value, subj.label)}
+                            onBlur={() => handleMaxScoreBlur(subj.key)}
+                            aria-label={`${subj.label}の満点`}
+                            className={`flex-1 min-w-0 text-center text-xs sm:text-sm font-black border rounded-xl px-1 py-1.5 focus:bg-white focus:outline-none tabular-nums ${
+                              isMaxInvalid
+                                ? 'border-rose-400 bg-rose-50 text-rose-700 focus:border-rose-500'
+                                : 'border-stone-200 bg-[#fdfbf7] text-slate-700 focus:border-[#1c603a]'
+                            }`}
+                            required
+                          />
+                          <span className="text-[10px] font-black text-stone-400 shrink-0">点</span>
+                        </div>
                       </div>
                     ) : (
                       <div className="text-center text-[10px] font-bold text-stone-400 py-2 bg-stone-100 rounded-xl border border-dashed border-stone-200">
@@ -378,7 +624,7 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
             </button>
             <button
               type="submit"
-              disabled={savedSuccess || activeCount === 0}
+              disabled={savedSuccess || activeCount === 0 || hasInvalidMax}
               className="px-6 py-2.5 text-xs font-black text-white bg-[#1c603a] hover:bg-[#154a2c] rounded-2xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               {savedSuccess ? (

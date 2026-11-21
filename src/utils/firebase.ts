@@ -940,5 +940,82 @@ export function subscribeToPosts(
   }
 }
 
+/**
+ * Saves or updates a test score record in Firebase Firestore (`testRecords` collection).
+ */
+export async function saveTestRecordToCloud(record: TestRecord): Promise<void> {
+  try {
+    const docId = toSafeFirestoreId(record.id);
+    const payload = sanitizeForFirestore({
+      ...record,
+      id: docId,
+      updatedAt: record.updatedAt || new Date().toISOString(),
+    });
+    const docRef = doc(db, COLLECTIONS.TEST_RECORDS, docId);
+    await setDoc(docRef, payload, { merge: true });
+    console.info(`[Firebase] Saved test record to Firestore: ${docId}`);
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error('[Firebase] Failed to save test record:', errorMsg);
+    throw new Error(`成績データのクラウド保存エラー: ${errorMsg}`);
+  }
+}
+
+/**
+ * Fetches all test score records from Firebase Firestore once.
+ */
+export async function fetchTestRecordsFromCloud(): Promise<TestRecord[]> {
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.TEST_RECORDS));
+    const list: TestRecord[] = [];
+    snap.forEach((d) => {
+      const item = d.data() as TestRecord;
+      if (item && item.testTitle && item.studentNumber !== undefined) {
+        list.push({
+          ...item,
+          id: item.id || d.id,
+        });
+      }
+    });
+    return list;
+  } catch (err: any) {
+    console.error('[Firebase] Error fetching test records:', err?.message || err);
+    return [];
+  }
+}
+
+/**
+ * Subscribes to real-time updates for test score records across all devices.
+ */
+export function subscribeToTestRecords(
+  onUpdate: (records: TestRecord[]) => void
+): () => void {
+  try {
+    const colRef = collection(db, COLLECTIONS.TEST_RECORDS);
+    return onSnapshot(
+      colRef,
+      (snapshot) => {
+        const list: TestRecord[] = [];
+        snapshot.forEach((d) => {
+          const item = d.data() as TestRecord;
+          if (item && item.testTitle && item.studentNumber !== undefined) {
+            list.push({
+              ...item,
+              id: item.id || d.id,
+            });
+          }
+        });
+        onUpdate(list);
+      },
+      (error) => {
+        console.error('Firestore testRecords subscription error:', error);
+      }
+    );
+  } catch (e: any) {
+    console.error('Failed to attach testRecords listener:', e);
+    return () => {};
+  }
+}
+
 
 

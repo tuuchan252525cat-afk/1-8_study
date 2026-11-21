@@ -52,7 +52,7 @@
     },
     "TestRecord": {
       "title": "TestRecord",
-      "description": "Anonymous score records for tests",
+      "description": "Anonymous score records for tests with per-subject max scores",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
@@ -60,7 +60,11 @@
         "testDate": { "type": "string", "maxLength": 32 },
         "studentNumber": { "type": "number" },
         "scores": { "type": "object" },
-        "totalScore": { "type": "number" }
+        "maxScores": { "type": "object" },
+        "subjectDetails": { "type": "array" },
+        "totalScore": { "type": "number" },
+        "totalMaxScore": { "type": "number" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "testTitle", "studentNumber", "totalScore"]
     },

@@ -11,9 +11,14 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
 
   if (!currentStudent) return null;
 
-  const hasScore = personalStanding.totalScore > 0;
+  const hasScore = personalStanding.rank > 0 || personalStanding.totalScore > 0;
   const growthDelta = personalStanding.growthDelta ?? 0;
   const isPositiveGrowth = growthDelta > 0;
+  const totalMaxScore = personalStanding.totalMaxScore || 500;
+  const scoreRate =
+    personalStanding.scoreRate !== undefined
+      ? personalStanding.scoreRate
+      : Math.round((personalStanding.totalScore / totalMaxScore) * 1000) / 10;
 
   return (
     <div className="bg-white rounded-3xl p-5 sm:p-7 border border-stone-200/90 shadow-xs relative overflow-hidden">
@@ -100,7 +105,7 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
               )}
             </div>
             <div>
-              <div className="flex items-baseline gap-1.5 mt-1">
+              <div className="flex items-baseline gap-1.5 mt-1 flex-wrap">
                 <span
                   className={`text-3xl font-black tabular-nums ${
                     isPositiveGrowth
@@ -112,10 +117,19 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
                 >
                   {isPositiveGrowth ? `+${growthDelta}` : growthDelta}
                 </span>
-                <span className="text-xs font-black text-slate-600">点アップ</span>
+                <span className="text-xs font-black text-slate-600">
+                  {isPositiveGrowth ? '点アップ' : '点'}
+                </span>
+                {personalStanding.growthRateDelta !== undefined && (
+                  <span className="text-[11px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md tabular-nums">
+                    得点率 {personalStanding.growthRateDelta > 0 ? `+${personalStanding.growthRateDelta}` : personalStanding.growthRateDelta}%
+                  </span>
+                )}
               </div>
               <p className="text-[11px] text-stone-500 mt-1.5 font-bold line-clamp-1">
-                {isPositiveGrowth
+                {personalStanding.hasDifferentMax && personalStanding.growthRateDelta !== undefined
+                  ? `◎ 満点の違いを考慮し得点率（${personalStanding.growthRateDelta > 0 ? `+${personalStanding.growthRateDelta}` : personalStanding.growthRateDelta}%）で比較しています`
+                  : isPositiveGrowth
                   ? '◎ 素晴らしい成長です！実力が定着しています'
                   : growthDelta < 0
                   ? '◎ 苦手分野を振り返って次回さらに伸ばしましょう'
@@ -133,14 +147,18 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
                 </div>
                 <span className="font-black text-slate-800 text-xs">合計得点</span>
               </div>
-              <span className="text-[11px] font-bold text-stone-400">総合スコア</span>
+              <span className="text-[11px] font-black text-[#1c603a] tabular-nums">
+                得点率 {scoreRate}%
+              </span>
             </div>
             <div>
-              <div className="flex items-baseline gap-1.5 mt-1">
+              <div className="flex items-baseline gap-1.5 mt-1 flex-wrap">
                 <span className="text-3xl font-black text-slate-900 tabular-nums">
                   {personalStanding.totalScore}
                 </span>
-                <span className="text-xs font-black text-slate-600">点</span>
+                <span className="text-xs font-black text-slate-500 tabular-nums">
+                  / {totalMaxScore}点満点
+                </span>
               </div>
               <div className="text-[11px] text-stone-500 font-bold mt-1.5 flex items-center gap-1.5">
                 <span>平均: {personalStanding.classAverage}点</span>

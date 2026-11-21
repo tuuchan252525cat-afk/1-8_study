@@ -13,6 +13,7 @@ import {
   PersonalStanding,
   ScoreDistributionBin,
   SubjectScores,
+  SubjectScoreDetail,
   PeriodicTestSchedule,
 } from '../types';
 import {
@@ -31,7 +32,7 @@ import {
   calculateDistribution,
 } from '../utils/privacyRankings';
 import { getPersistentItem, setPersistentItem } from '../utils/dbStorage';
-import { SubjectOption, DEFAULT_SUBJECTS, createSubjectOption } from '../constants/subjects';
+import { SubjectOption, DEFAULT_SUBJECTS, createSubjectOption, getSubjectLabel } from '../constants/subjects';
 import {
   getAppBasePath,
   getTabFromLocation,
@@ -68,6 +69,9 @@ import {
   deletePostFromCloud,
   fetchPostsFromCloud,
   subscribeToPosts,
+  saveTestRecordToCloud,
+  fetchTestRecordsFromCloud,
+  subscribeToTestRecords,
   isOctoberPost,
 } from '../utils/firebase';
 
@@ -98,7 +102,12 @@ interface AppContextType {
   availableTestTitles: string[];
   activeTestTitle: string;
   setActiveTestTitle: (title: string) => void;
-  saveMyScore: (testTitle: string, testDate: string, scores: SubjectScores) => void;
+  saveMyScore: (
+    testTitle: string,
+    testDate: string,
+    scores: SubjectScores,
+    maxScores?: SubjectScores
+  ) => void;
   addPeriodicTest: (title: string, date: string) => Promise<void>;
   deletePeriodicTest: (testId: string) => Promise<void>;
 
@@ -206,6 +215,38 @@ function getStudentFallbackLabel(attendanceNumber: number): string {
   if (attendanceNumber === 101) return '先生（担任）';
   if (attendanceNumber === 102) return '先生（副担任）';
   return `出席番号${attendanceNumber}番`;
+}
+
+function getRecordMaxScore(r: TestRecord): number {
+  if (typeof r.totalMaxScore === 'number' && r.totalMaxScore > 0) {
+    return r.totalMaxScore;
+  }
+  if (Array.isArray(r.subjectDetails) && r.subjectDetails.length > 0) {
+    const sum = r.subjectDetails.reduce((acc, d) => acc + (Number(d.maxScore) || 100), 0);
+    if (sum > 0) return sum;
+  }
+  if (r.scores) {
+    const keys = Object.keys(r.scores).filter(
+      (k) => r.scores[k] !== undefined && r.scores[k] !== null
+    );
+    if (keys.length > 0) {
+      return keys.reduce((acc, k) => acc + (Number(r.maxScores?.[k] ?? 100) || 100), 0);
+    }
+  }
+  return 500;
+}
+
+function mergeTestRecord(existing: TestRecord | undefined, incoming: TestRecord): TestRecord {
+  if (!existing) return incoming;
+  const existingUpdated = existing.updatedAt || '';
+  const incomingUpdated = incoming.updatedAt || '';
+  if (incomingUpdated && existingUpdated) {
+    return incomingUpdated >= existingUpdated ? incoming : existing;
+  }
+  if (incomingUpdated && !existingUpdated) return incoming;
+  if (!incomingUpdated && existingUpdated) return existing;
+  if (incoming.totalMaxScore && !existing.totalMaxScore) return incoming;
+  return existing;
 }
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -400,9 +441,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           });
         }
 
+        let cloudRecords: TestRecord[] = [];
+        try {
+          cloudRecords = await fetchTestRecordsFromCloud();
+        } catch (e) {
+          console.warn('Firebase cloud testRecords fetch notice:', e);
+        }
+
         const recordsMap = new Map<string, TestRecord>();
-        (serverData?.testRecords || []).forEach((r: TestRecord) => { if (r?.id) recordsMap.set(r.id, r); });
-        (localRecords || []).forEach((r) => { if (r?.id) recordsMap.set(r.id, r); });
+        [...(serverData?.testRecords || []), ...(localRecords || []), ...(cloudRecords || [])].forEach(
+          (r: TestRecord) => {
+            if (!r?.id || !r?.testTitle || r?.studentNumber === undefined) return;
+            const dedupKey = `${r.testTitle}__${r.studentNumber}`;
+            recordsMap.set(dedupKey, mergeTestRecord(recordsMap.get(dedupKey), r));
+          }
+        );
         const mergedRecords = Array.from(recordsMap.values());
 
         let cloudPosts: ForumPost[] = [];
@@ -683,6 +736,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setPersistentItem(STORAGE_KEYS.PERIODIC_TESTS, cloudList);
         }
         return cloudList;
+      });
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Real-time Firestore subscription for Test Records
+  useEffect(() => {
+    const unsubscribe = subscribeToTestRecords((cloudList) => {
+      if (!cloudList) return;
+      setTestRecords((prev) => {
+        if (cloudList.length === 0 && prev.length === 0) return prev;
+        const map = new Map<string, TestRecord>();
+        [...prev, ...cloudList].forEach((r) => {
+          if (!r?.id || !r?.testTitle || r?.studentNumber === undefined) return;
+          const key = `${r.testTitle}__${r.studentNumber}`;
+          map.set(key, mergeTestRecord(map.get(key), r));
+        });
+        const merged = Array.from(map.values());
+        if (isHydratedRef.current) {
+          setPersistentItem(STORAGE_KEYS.TEST_RECORDS, merged);
+        }
+        return merged;
       });
     });
     return () => unsubscribe();
@@ -1033,13 +1108,59 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const saveMyScore = (
     testTitle: string,
     testDate: string,
-    scores: SubjectScores
+    scores: SubjectScores,
+    maxScores?: SubjectScores
   ) => {
     if (!currentStudentNum) return;
-    const total: number = Object.values(scores).reduce<number>(
-      (acc, val) => acc + (Number(val) || 0),
-      0
+
+    const normalizedScores: SubjectScores = {};
+    const normalizedMaxScores: SubjectScores = {};
+    const subjectDetails: SubjectScoreDetail[] = [];
+
+    Object.entries(scores).forEach(([key, rawVal]) => {
+      if (rawVal === undefined || rawVal === null) return;
+      const maxVal = Math.max(1, Math.floor(Number(maxScores?.[key] ?? 100) || 100));
+      const clampedScore = Math.max(0, Math.min(maxVal, Math.floor(Number(rawVal) || 0)));
+      normalizedScores[key] = clampedScore;
+      normalizedMaxScores[key] = maxVal;
+      subjectDetails.push({
+        subjectKey: key,
+        subject: getSubjectLabel(key, customSubjects),
+        score: clampedScore,
+        maxScore: maxVal,
+      });
+    });
+
+    const total: number = subjectDetails.reduce((acc, d) => acc + d.score, 0);
+    const totalMax: number = subjectDetails.reduce((acc, d) => acc + d.maxScore, 0);
+    const nowIso = new Date().toISOString();
+
+    const existingRecord = testRecords.find(
+      (r) => r.testTitle === testTitle && r.studentNumber === currentStudentNum
     );
+    const nextRecord: TestRecord = existingRecord
+      ? {
+          ...existingRecord,
+          testDate,
+          scores: normalizedScores,
+          maxScores: normalizedMaxScores,
+          subjectDetails,
+          totalScore: total,
+          totalMaxScore: totalMax,
+          updatedAt: nowIso,
+        }
+      : {
+          id: `custom-test-${Date.now()}-${currentStudentNum}`,
+          testTitle,
+          testDate,
+          studentNumber: currentStudentNum,
+          scores: normalizedScores,
+          maxScores: normalizedMaxScores,
+          subjectDetails,
+          totalScore: total,
+          totalMaxScore: totalMax,
+          updatedAt: nowIso,
+        };
 
     setTestRecords((prev) => {
       const existingIndex = prev.findIndex(
@@ -1047,25 +1168,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       );
       if (existingIndex >= 0) {
         const updated = [...prev];
-        updated[existingIndex] = {
-          ...updated[existingIndex],
-          testDate,
-          scores,
-          totalScore: total,
-        };
+        updated[existingIndex] = { ...nextRecord, id: updated[existingIndex].id };
         return updated;
       }
-      return [
-        {
-          id: `custom-test-${Date.now()}`,
-          testTitle,
-          testDate,
-          studentNumber: currentStudentNum,
-          scores,
-          totalScore: total,
-        },
-        ...prev,
-      ];
+      return [nextRecord, ...prev];
+    });
+
+    saveTestRecordToCloud(nextRecord).catch((e) => {
+      console.warn('Test record cloud save notice:', e);
     });
   };
 
@@ -1085,7 +1195,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [testRecords, activeTestTitle]);
 
   const prevTestRecords = useMemo(() => {
-    return testRecords.filter((r) => r.testTitle !== activeTestTitle);
+    const others = testRecords
+      .filter((r) => r.testTitle !== activeTestTitle)
+      .sort((a, b) => (a.testDate || '').localeCompare(b.testDate || ''));
+    const latestByStudent = new Map<number, TestRecord>();
+    others.forEach((r) => {
+      latestByStudent.set(r.studentNumber, r);
+    });
+    return Array.from(latestByStudent.values());
   }, [testRecords, activeTestTitle]);
 
   // Anonymous Rankings
@@ -1093,6 +1210,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const items = currentTestRecords.map((r) => ({
       studentNumber: r.studentNumber,
       score: r.totalScore,
+      maxScore: getRecordMaxScore(r),
     }));
     return calculateAnonymousRankings(items);
   }, [currentTestRecords]);
@@ -1102,36 +1220,46 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const prevItems = prevTestRecords.map((r) => ({
       studentNumber: r.studentNumber,
       score: r.totalScore,
+      maxScore: getRecordMaxScore(r),
     }));
     const currItems = currentTestRecords.map((r) => ({
       studentNumber: r.studentNumber,
       score: r.totalScore,
+      maxScore: getRecordMaxScore(r),
     }));
     return calculateAnonymousGrowthRankings(prevItems, currItems);
   }, [prevTestRecords, currentTestRecords]);
 
   // Personal Standing
-  const personalStanding = useMemo(() => {
+  const personalStanding = useMemo((): PersonalStanding => {
     const items = currentTestRecords.map((r) => ({
       studentNumber: r.studentNumber,
       score: r.totalScore,
+      maxScore: getRecordMaxScore(r),
     }));
     const standing = calculatePersonalStanding(items, currentStudentNum);
 
     const prevItems = prevTestRecords.map((r) => ({
       studentNumber: r.studentNumber,
       score: r.totalScore,
+      maxScore: getRecordMaxScore(r),
     }));
     const growth = calculatePersonalGrowth(prevItems, items, currentStudentNum);
 
     return {
       studentNumber: currentStudentNum,
       totalScore: standing.myScore ?? 0,
+      totalMaxScore: standing.myMaxScore ?? undefined,
+      scoreRate: standing.myScoreRate ?? undefined,
       rank: standing.myRank ?? 0,
       totalParticipants: standing.totalParticipants,
       classAverage: standing.classAverage,
+      classAverageRate: standing.classAverageRate ?? undefined,
       classMax: standing.classMax,
+      classMaxTotal: standing.classMaxTotal ?? undefined,
       growthDelta: growth.growthDelta ?? undefined,
+      growthRateDelta: growth.growthRateDelta ?? undefined,
+      hasDifferentMax: growth.hasDifferentMax,
       growthRank: growth.growthRank ?? undefined,
     };
   }, [currentTestRecords, prevTestRecords, currentStudentNum]);
@@ -1139,7 +1267,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Score Distribution
   const scoreDistribution = useMemo(() => {
     const scores = currentTestRecords.map((r) => r.totalScore);
-    return calculateDistribution(scores, 500);
+    const maxTotal =
+      currentTestRecords.length > 0
+        ? Math.max(...currentTestRecords.map(getRecordMaxScore))
+        : 500;
+    return calculateDistribution(scores, maxTotal);
   }, [currentTestRecords]);
 
   // Quiz Handling (Cloud-synced bestScore, attemptCount, category, quizTitle)

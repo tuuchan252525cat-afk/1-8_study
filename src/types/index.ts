@@ -35,24 +35,39 @@ export interface SubjectScores {
   [key: string]: number | undefined;
 }
 
+export interface SubjectScoreDetail {
+  subjectKey: string;
+  subject: string;
+  score: number;
+  maxScore: number;
+}
+
 export interface TestRecord {
   id: string;
   testTitle: string;
   testDate: string;
   studentNumber: number;
   scores: SubjectScores;
+  maxScores?: SubjectScores;
+  subjectDetails?: SubjectScoreDetail[];
   totalScore: number;
+  totalMaxScore?: number;
+  updatedAt?: string;
 }
 
 export interface AnonymousRankItem {
   rank: number;
   score: number;
+  maxScore?: number;
+  scoreRate?: number;
   isCurrentUser?: boolean; // Only used locally in user's highlight if configured, but public array contains NO student id
 }
 
 export interface AnonymousGrowthItem {
   rank: number;
   delta: number; // e.g. +14
+  rateDelta?: number; // percentage-point change e.g. +4.5
+  hasDifferentMax?: boolean;
 }
 
 export interface DistributionBin {
@@ -69,11 +84,17 @@ export type ScoreDistributionBin = DistributionBin;
 export interface PersonalStanding {
   studentNumber: number;
   totalScore: number;
+  totalMaxScore?: number;
+  scoreRate?: number;
   rank: number;
   totalParticipants: number;
   classAverage: number;
+  classAverageRate?: number;
   classMax: number;
+  classMaxTotal?: number;
   growthDelta?: number;
+  growthRateDelta?: number;
+  hasDifferentMax?: boolean;
   growthRank?: number;
 }
 

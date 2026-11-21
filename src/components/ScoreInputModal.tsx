@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
-import { X, Check, Edit3, CheckSquare, Square, Plus, Trash2, AlertCircle } from 'lucide-react';
+import { X, Check, Edit3, CheckSquare, Square, Plus, Trash2, AlertCircle, Lock } from 'lucide-react';
 import { SubjectScores } from '../types';
+import { getFixedMaxScore, getDefaultMaxScore } from '../constants/subjects';
 
 interface Props {
   isOpen: boolean;
@@ -46,9 +47,9 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
   });
 
   const [subjectMaxScores, setSubjectMaxScores] = useState<Record<string, number>>({
-    japanese: 100,
-    math: 100,
-    english: 100,
+    japanese: 200,
+    math: 200,
+    english: 200,
     geography: 100,
     history: 100,
   });
@@ -106,7 +107,12 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
       setSubjectMaxScores((prev) => {
         const next = { ...prev };
         allSubjects.forEach((s) => {
-          if (next[s.key] === undefined) next[s.key] = 100;
+          const fixedMax = getFixedMaxScore(s.key);
+          if (fixedMax !== undefined) {
+            next[s.key] = fixedMax;
+          } else if (next[s.key] === undefined) {
+            next[s.key] = getDefaultMaxScore(s.key);
+          }
         });
         return next;
       });
@@ -131,10 +137,12 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
           (d) => d.subjectKey === subj.key || d.subject === subj.label
         )?.maxScore;
         const storedMax = existing.maxScores?.[subj.key as keyof SubjectScores] ?? detailMax;
+        const fixedMax = getFixedMaxScore(subj.key);
         const resolvedMax =
-          storedMax !== undefined && storedMax !== null && Number(storedMax) >= 1
+          fixedMax ??
+          (storedMax !== undefined && storedMax !== null && Number(storedMax) >= 1
             ? Math.floor(Number(storedMax))
-            : 100;
+            : getDefaultMaxScore(subj.key));
 
         if (val !== undefined && val !== null) {
           const clampedScore = Math.max(0, Math.min(resolvedMax, Number(val)));
@@ -144,22 +152,24 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
           newScoreInputs[subj.key] = String(clampedScore);
           newMaxInputs[subj.key] = String(resolvedMax);
         } else {
+          const defaultMax = getDefaultMaxScore(subj.key);
           newSel[subj.key] = false;
           newScores[subj.key] = 80;
-          newMaxScores[subj.key] = 100;
+          newMaxScores[subj.key] = defaultMax;
           newScoreInputs[subj.key] = '80';
-          newMaxInputs[subj.key] = '100';
+          newMaxInputs[subj.key] = String(defaultMax);
         }
       });
     } else {
-      // Default selection (5 main subjects, 100 points max each)
+      // Default selection (5 main subjects; 国語/数学/英語 fixed at 200, others default 100)
       allSubjects.forEach((subj) => {
         const isDefaultMain = ['japanese', 'math', 'english', 'geography', 'history'].includes(subj.key);
+        const defaultMax = getDefaultMaxScore(subj.key);
         newSel[subj.key] = isDefaultMain;
         newScores[subj.key] = 80;
-        newMaxScores[subj.key] = 100;
+        newMaxScores[subj.key] = defaultMax;
         newScoreInputs[subj.key] = '80';
-        newMaxInputs[subj.key] = '100';
+        newMaxInputs[subj.key] = String(defaultMax);
       });
     }
 
@@ -192,7 +202,7 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
     const parsed = Number(raw);
     if (!Number.isFinite(parsed)) return;
 
-    const maxVal = Math.max(1, subjectMaxScores[key] ?? 100);
+    const maxVal = getFixedMaxScore(key) ?? Math.max(1, subjectMaxScores[key] ?? getDefaultMaxScore(key));
     if (parsed < 0) {
       setSubjectScores((prev) => ({ ...prev, [key]: 0 }));
       setScoreInputs((prev) => ({ ...prev, [key]: '0' }));
@@ -222,6 +232,13 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
   };
 
   const handleMaxScoreInputChange = (key: string, raw: string, label: string) => {
+    const fixedMax = getFixedMaxScore(key);
+    if (fixedMax !== undefined) {
+      setSubjectMaxScores((prev) => ({ ...prev, [key]: fixedMax }));
+      setMaxScoreInputs((prev) => ({ ...prev, [key]: String(fixedMax) }));
+      return;
+    }
+
     setMaxScoreInputs((prev) => ({ ...prev, [key]: raw }));
 
     if (raw === '') {
@@ -253,6 +270,13 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
   };
 
   const handleMaxScoreBlur = (key: string) => {
+    const fixedMax = getFixedMaxScore(key);
+    if (fixedMax !== undefined) {
+      setSubjectMaxScores((prev) => ({ ...prev, [key]: fixedMax }));
+      setMaxScoreInputs((prev) => ({ ...prev, [key]: String(fixedMax) }));
+      return;
+    }
+
     const raw = maxScoreInputs[key];
     const parsed = Math.floor(Number(raw));
     if (raw === undefined || raw === '' || !Number.isFinite(parsed) || parsed < 1) {
@@ -277,14 +301,15 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
 
     const parsedMax = Math.floor(Number(customSubjectMaxInput));
     const initialMax = Number.isFinite(parsedMax) && parsedMax >= 1 ? parsedMax : 100;
-    const initialScore = Math.min(80, initialMax);
 
     const newOption = addCustomSubject(trimmed);
+    const resolvedMax = getFixedMaxScore(newOption.key) ?? initialMax;
+    const initialScore = Math.min(80, resolvedMax);
 
     // Automatically check & initialize score + maxScore for new custom subject
     setSelectedSubjects((prev) => ({ ...prev, [newOption.key]: true }));
-    setSubjectMaxScores((prev) => ({ ...prev, [newOption.key]: initialMax }));
-    setMaxScoreInputs((prev) => ({ ...prev, [newOption.key]: String(initialMax) }));
+    setSubjectMaxScores((prev) => ({ ...prev, [newOption.key]: resolvedMax }));
+    setMaxScoreInputs((prev) => ({ ...prev, [newOption.key]: String(resolvedMax) }));
     setSubjectScores((prev) => ({ ...prev, [newOption.key]: initialScore }));
     setScoreInputs((prev) => ({ ...prev, [newOption.key]: String(initialScore) }));
 
@@ -317,22 +342,28 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
   const activeCount = activeKeys.length;
 
   const hasInvalidMax = activeSubjects.some((subj) => {
+    if (getFixedMaxScore(subj.key) !== undefined) return false;
     const raw = maxScoreInputs[subj.key];
     if (raw === '') return true;
     if (raw !== undefined) {
       const n = Math.floor(Number(raw));
       return !Number.isFinite(n) || n < 1;
     }
-    return (subjectMaxScores[subj.key] ?? 100) < 1;
+    return (subjectMaxScores[subj.key] ?? getDefaultMaxScore(subj.key)) < 1;
   });
 
   const maxTotalScore = activeKeys.reduce<number>(
-    (acc, k) => acc + Math.max(1, subjectMaxScores[k] ?? 100),
+    (acc, k) => acc + (getFixedMaxScore(k) ?? Math.max(1, subjectMaxScores[k] ?? getDefaultMaxScore(k))),
     0
   );
 
   const currentTotalScore = activeKeys.reduce<number>(
-    (acc, k) => acc + Math.min(subjectScores[k] ?? 0, Math.max(1, subjectMaxScores[k] ?? 100)),
+    (acc, k) =>
+      acc +
+      Math.min(
+        subjectScores[k] ?? 0,
+        getFixedMaxScore(k) ?? Math.max(1, subjectMaxScores[k] ?? getDefaultMaxScore(k))
+      ),
     0
   );
 
@@ -355,7 +386,7 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
     const finalScores: SubjectScores = {};
     const finalMaxScores: SubjectScores = {};
     activeKeys.forEach((key) => {
-      const maxVal = Math.max(1, Math.floor(subjectMaxScores[key] ?? 100));
+      const maxVal = getFixedMaxScore(key) ?? Math.max(1, Math.floor(subjectMaxScores[key] ?? getDefaultMaxScore(key)));
       const scoreVal = Math.max(0, Math.min(maxVal, Math.floor(subjectScores[key] ?? 0)));
       finalScores[key as keyof SubjectScores] = scoreVal;
       finalMaxScores[key as keyof SubjectScores] = maxVal;
@@ -393,7 +424,7 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
         </div>
 
         <p className="text-xs text-stone-500 mb-4 leading-relaxed font-medium">
-          テストに含まれる教科を選択し、得点と各教科の満点（初期値100点）を入力してください。独自教科も自由に追加できます。
+          テストに含まれる教科を選択し、得点を入力してください。国語・数学・英語は200点満点固定、その他の教科は満点を変更できます（初期値100点）。
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-5">
@@ -540,12 +571,15 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
               {allSubjects.map((subj) => {
                 const isChecked = Boolean(selectedSubjects[subj.key]);
+                const fixedMax = getFixedMaxScore(subj.key);
+                const isFixedMax = fixedMax !== undefined;
                 const scoreVal = subjectScores[subj.key] ?? 0;
-                const maxVal = subjectMaxScores[subj.key] ?? 100;
+                const maxVal = fixedMax ?? (subjectMaxScores[subj.key] ?? getDefaultMaxScore(subj.key));
                 const rawMaxStr = maxScoreInputs[subj.key];
                 const isMaxInvalid =
-                  rawMaxStr === '' ||
-                  (rawMaxStr !== undefined && (!Number.isFinite(Number(rawMaxStr)) || Number(rawMaxStr) < 1));
+                  !isFixedMax &&
+                  (rawMaxStr === '' ||
+                    (rawMaxStr !== undefined && (!Number.isFinite(Number(rawMaxStr)) || Number(rawMaxStr) < 1)));
 
                 return (
                   <div
@@ -594,7 +628,14 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
                       <div className="space-y-1">
                         <div className="flex items-center justify-between text-[10px] font-bold text-stone-400 px-0.5">
                           <span>得点</span>
-                          <span>満点</span>
+                          {isFixedMax ? (
+                            <span className="inline-flex items-center gap-0.5 text-stone-500">
+                              <Lock className="w-2.5 h-2.5" />
+                              <span>満点固定</span>
+                            </span>
+                          ) : (
+                            <span>満点</span>
+                          )}
                         </div>
                         <div className="flex items-center gap-1">
                           <input
@@ -609,20 +650,30 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
                             required
                           />
                           <span className="text-xs font-black text-stone-400 shrink-0">/</span>
-                          <input
-                            type="number"
-                            min={1}
-                            value={maxScoreInputs[subj.key] ?? String(maxVal)}
-                            onChange={(e) => handleMaxScoreInputChange(subj.key, e.target.value, subj.label)}
-                            onBlur={() => handleMaxScoreBlur(subj.key)}
-                            aria-label={`${subj.label}の満点`}
-                            className={`flex-1 min-w-0 text-center text-xs sm:text-sm font-black border rounded-xl px-1 py-1.5 focus:bg-white focus:outline-none tabular-nums ${
-                              isMaxInvalid
-                                ? 'border-rose-400 bg-rose-50 text-rose-700 focus:border-rose-500'
-                                : 'border-stone-200 bg-[#fdfbf7] text-slate-700 focus:border-[#1c603a]'
-                            }`}
-                            required
-                          />
+                          {isFixedMax ? (
+                            <div
+                              aria-label={`${subj.label}の満点（${maxVal}点固定）`}
+                              title={`${subj.label}の満点は${maxVal}点に固定されています`}
+                              className="flex-1 min-w-0 text-center text-xs sm:text-sm font-black border border-stone-200 rounded-xl px-1 py-1.5 bg-stone-100 text-slate-600 tabular-nums select-none"
+                            >
+                              {maxVal}
+                            </div>
+                          ) : (
+                            <input
+                              type="number"
+                              min={1}
+                              value={maxScoreInputs[subj.key] ?? String(maxVal)}
+                              onChange={(e) => handleMaxScoreInputChange(subj.key, e.target.value, subj.label)}
+                              onBlur={() => handleMaxScoreBlur(subj.key)}
+                              aria-label={`${subj.label}の満点`}
+                              className={`flex-1 min-w-0 text-center text-xs sm:text-sm font-black border rounded-xl px-1 py-1.5 focus:bg-white focus:outline-none tabular-nums ${
+                                isMaxInvalid
+                                  ? 'border-rose-400 bg-rose-50 text-rose-700 focus:border-rose-500'
+                                  : 'border-stone-200 bg-[#fdfbf7] text-slate-700 focus:border-[#1c603a]'
+                              }`}
+                              required
+                            />
+                          )}
                           <span className="text-[10px] font-black text-stone-400 shrink-0">点</span>
                         </div>
                       </div>

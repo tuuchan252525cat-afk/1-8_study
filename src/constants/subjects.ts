@@ -35,6 +35,20 @@ export const SUBJECT_MAP: Record<string, string> = {
   other: 'その他',
 };
 
+export const FIXED_SUBJECT_MAX_SCORES: Record<string, number> = {
+  japanese: 200,
+  math: 200,
+  english: 200,
+};
+
+export function getFixedMaxScore(key: string): number | undefined {
+  return FIXED_SUBJECT_MAX_SCORES[key];
+}
+
+export function getDefaultMaxScore(key: string): number {
+  return FIXED_SUBJECT_MAX_SCORES[key] ?? 100;
+}
+
 export function getSubjectLabel(key: string, customSubjects: SubjectOption[] = []): string {
   if (SUBJECT_MAP[key]) return SUBJECT_MAP[key];
   const found = customSubjects.find((s) => s.key === key);

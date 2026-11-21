@@ -26,7 +26,239 @@
     }
   ],
   "quizzes": [],
-  "testRecords": [],
+  "testRecords": [
+    {
+      "id": "custom-test-1795249063981-5",
+      "subjectDetails": [
+        {
+          "maxScore": 100,
+          "score": 100,
+          "subjectKey": "japanese",
+          "subject": "国語"
+        },
+        {
+          "maxScore": 100,
+          "subject": "数学",
+          "subjectKey": "math",
+          "score": 100
+        },
+        {
+          "subjectKey": "english",
+          "subject": "英語",
+          "score": 80,
+          "maxScore": 100
+        },
+        {
+          "score": 80,
+          "subjectKey": "geography",
+          "maxScore": 100,
+          "subject": "地理"
+        },
+        {
+          "subject": "歴史",
+          "score": 80,
+          "subjectKey": "history",
+          "maxScore": 100
+        },
+        {
+          "subjectKey": "biology",
+          "maxScore": 100,
+          "subject": "生物",
+          "score": 80
+        },
+        {
+          "subject": "化学",
+          "maxScore": 100,
+          "score": 80,
+          "subjectKey": "chemistry"
+        },
+        {
+          "subject": "物理",
+          "maxScore": 100,
+          "subjectKey": "physics",
+          "score": 80
+        }
+      ],
+      "totalMaxScore": 800,
+      "maxScores": {
+        "math": 100,
+        "history": 100,
+        "physics": 100,
+        "english": 100,
+        "biology": 100,
+        "geography": 100,
+        "japanese": 100,
+        "chemistry": 100
+      },
+      "updatedAt": "2026-11-21T08:17:43.981Z",
+      "scores": {
+        "chemistry": 80,
+        "japanese": 100,
+        "math": 100,
+        "geography": 80,
+        "history": 80,
+        "physics": 80,
+        "english": 80,
+        "biology": 80
+      },
+      "studentNumber": 5,
+      "totalScore": 680,
+      "testDate": "2026-10-18",
+      "testTitle": "Test試験 2"
+    },
+    {
+      "id": "custom-test-1795247897299-5",
+      "totalMaxScore": 500,
+      "scores": {
+        "japanese": 80,
+        "geography": 80,
+        "history": 80,
+        "math": 80,
+        "english": 80
+      },
+      "testTitle": "Test 試験",
+      "testDate": "2026-10-18",
+      "maxScores": {
+        "geography": 100,
+        "japanese": 100,
+        "math": 100,
+        "history": 100,
+        "english": 100
+      },
+      "updatedAt": "2026-11-21T07:58:17.299Z",
+      "totalScore": 400,
+      "subjectDetails": [
+        {
+          "score": 80,
+          "subject": "国語",
+          "maxScore": 100,
+          "subjectKey": "japanese"
+        },
+        {
+          "subject": "数学",
+          "score": 80,
+          "maxScore": 100,
+          "subjectKey": "math"
+        },
+        {
+          "maxScore": 100,
+          "subjectKey": "english",
+          "score": 80,
+          "subject": "英語"
+        },
+        {
+          "subject": "地理",
+          "score": 80,
+          "subjectKey": "geography",
+          "maxScore": 100
+        },
+        {
+          "maxScore": 100,
+          "subject": "歴史",
+          "score": 80,
+          "subjectKey": "history"
+        }
+      ],
+      "studentNumber": 5
+    },
+    {
+      "scores": {
+        "physics": 52,
+        "english": 157,
+        "history": 80,
+        "biology": 73,
+        "kimiron": 98,
+        "math": 119,
+        "chemistry": 64,
+        "japanese": 171,
+        "home": 85,
+        "geography": 77
+      },
+      "updatedAt": "2026-11-21T10:16:35.109Z",
+      "maxScores": {
+        "chemistry": 100,
+        "physics": 100,
+        "english": 200,
+        "japanese": 200,
+        "history": 100,
+        "geography": 100,
+        "biology": 100,
+        "kimiron": 100,
+        "home": 100,
+        "math": 200
+      },
+      "id": "custom-test-1795256195109-5",
+      "totalMaxScore": 1300,
+      "testTitle": "1学期期末テスト",
+      "testDate": "2026-10-18",
+      "studentNumber": 5,
+      "totalScore": 976,
+      "averageScore": 97.6,
+      "subjectCount": 10,
+      "subjectDetails": [
+        {
+          "score": 171,
+          "maxScore": 200,
+          "subject": "国語",
+          "subjectKey": "japanese"
+        },
+        {
+          "score": 119,
+          "maxScore": 200,
+          "subjectKey": "math",
+          "subject": "数学"
+        },
+        {
+          "score": 157,
+          "subjectKey": "english",
+          "maxScore": 200,
+          "subject": "英語"
+        },
+        {
+          "score": 77,
+          "subjectKey": "geography",
+          "maxScore": 100,
+          "subject": "地理"
+        },
+        {
+          "maxScore": 100,
+          "score": 80,
+          "subjectKey": "history",
+          "subject": "歴史"
+        },
+        {
+          "maxScore": 100,
+          "subject": "生物",
+          "subjectKey": "biology",
+          "score": 73
+        },
+        {
+          "subject": "化学",
+          "score": 64,
+          "subjectKey": "chemistry",
+          "maxScore": 100
+        },
+        {
+          "score": 52,
+          "maxScore": 100,
+          "subjectKey": "physics",
+          "subject": "物理"
+        },
+        {
+          "subject": "家庭",
+          "subjectKey": "home",
+          "score": 85,
+          "maxScore": 100
+        },
+        {
+          "subjectKey": "kimiron",
+          "subject": "きみろん",
+          "score": 98,
+          "maxScore": 100
+        }
+      ]
+    }
+  ],
   "periodicTests": [],
   "deletedTestTitles": [],
   "posts": [
@@ -89,5 +321,5 @@
   ],
   "customSubjects": [],
   "quizSubmissions": [],
-  "lastUpdated": "2026-11-21T10:05:42.766Z"
+  "lastUpdated": "2026-11-21T10:16:38.203Z"
 }

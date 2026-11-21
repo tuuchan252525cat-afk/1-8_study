@@ -40,7 +40,7 @@ import {
   calculateTopScoreSummary,
 } from '../utils/privacyRankings';
 import { getPersistentItem, setPersistentItem } from '../utils/dbStorage';
-import { SubjectOption, DEFAULT_SUBJECTS, createSubjectOption, getSubjectLabel } from '../constants/subjects';
+import { SubjectOption, DEFAULT_SUBJECTS, createSubjectOption, getSubjectLabel, getFixedMaxScore } from '../constants/subjects';
 import {
   getAppBasePath,
   getTabFromLocation,
@@ -1400,7 +1400,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     Object.entries(scores).forEach(([key, rawVal]) => {
       if (rawVal === undefined || rawVal === null) return;
-      const maxVal = Math.max(1, Math.floor(Number(maxScores?.[key] ?? 100) || 100));
+      const maxVal = getFixedMaxScore(key) ?? Math.max(1, Math.floor(Number(maxScores?.[key] ?? 100) || 100));
       const clampedScore = Math.max(0, Math.min(maxVal, Math.floor(Number(rawVal) || 0)));
       normalizedScores[key] = clampedScore;
       normalizedMaxScores[key] = maxVal;

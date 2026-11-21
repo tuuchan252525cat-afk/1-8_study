@@ -12,6 +12,7 @@ import {
   AnonymousGrowthItem,
   PersonalStanding,
   ScoreDistributionBin,
+  TopScoreSummary,
   SubjectScores,
   SubjectScoreDetail,
   PeriodicTestSchedule,
@@ -25,11 +26,13 @@ import {
   INITIAL_POSTS,
 } from '../data/initialData';
 import {
+  PUBLIC_TOP_LIMIT,
+  calcRatePercent,
   calculateAnonymousRankings,
   calculatePersonalStanding,
-  calculateAnonymousGrowthRankings,
-  calculatePersonalGrowth,
-  calculateDistribution,
+  limitTopRankings,
+  limitTopGrowthRankings,
+  calculateTopScoreSummary,
 } from '../utils/privacyRankings';
 import { getPersistentItem, setPersistentItem } from '../utils/dbStorage';
 import { SubjectOption, DEFAULT_SUBJECTS, createSubjectOption, getSubjectLabel } from '../constants/subjects';
@@ -70,8 +73,13 @@ import {
   fetchPostsFromCloud,
   subscribeToPosts,
   saveTestRecordToCloud,
-  fetchTestRecordsFromCloud,
-  subscribeToTestRecords,
+  syncTestRecordToAnonymousLeaderboards,
+  fetchMyTestRecordsFromCloud,
+  subscribeToMyTestRecords,
+  fetchLeaderboardTestTitles,
+  subscribeToPublicTopLeaderboard,
+  subscribeToPublicTopGrowthLeaderboard,
+  fetchMyServerRankStanding,
   isOctoberPost,
 } from '../utils/firebase';
 
@@ -111,9 +119,10 @@ interface AppContextType {
   addPeriodicTest: (title: string, date: string) => Promise<void>;
   deletePeriodicTest: (testId: string) => Promise<void>;
 
-  // Privacy Protected Rankings (Public & Personal)
+  // Privacy Protected Rankings (Public TOP-N Only & Personal)
   anonymousRankings: AnonymousRankItem[];
   anonymousGrowthRankings: AnonymousGrowthItem[];
+  topScoreSummary: TopScoreSummary | null;
   personalStanding: PersonalStanding;
   scoreDistribution: ScoreDistributionBin[];
 
@@ -272,6 +281,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'connected' | 'syncing' | 'error'>('syncing');
   const [cloudSyncError, setCloudSyncError] = useState<string | null>(null);
 
+  // Privacy-isolated TOP-N public rankings & server-side standing counts
+  const [leaderboardTestTitles, setLeaderboardTestTitles] = useState<string[]>([]);
+  const [cloudTopRankings, setCloudTopRankings] = useState<AnonymousRankItem[]>([]);
+  const [cloudTopGrowthRankings, setCloudTopGrowthRankings] = useState<AnonymousGrowthItem[]>([]);
+  const [serverStandingCounts, setServerStandingCounts] = useState<{
+    totalParticipants: number;
+    myRank: number | null;
+    growthRank: number | null;
+    serverTopRankings: AnonymousRankItem[];
+    serverTopGrowthRankings: AnonymousGrowthItem[];
+    serverGrowthDelta?: number | null;
+    serverGrowthRateDelta?: number | null;
+    serverHasDifferentMax?: boolean;
+  }>({
+    totalParticipants: 0,
+    myRank: null,
+    growthRank: null,
+    serverTopRankings: [],
+    serverTopGrowthRankings: [],
+  });
+  const [standingRefreshTick, setStandingRefreshTick] = useState(0);
+
   // Hydration status guard: prevents React initial empty state from wiping persisted data
   const isHydratedRef = useRef<boolean>(false);
   const hasSyncedCloudQuizzesRef = useRef<boolean>(false);
@@ -301,7 +332,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         let serverData: any = null;
         if (!isStaticDeployment()) {
           try {
-            const res = await fetch('/api/data');
+            const res = await fetch(`/api/data?studentNumber=${encodeURIComponent(String(savedNum))}`);
             if (res.ok) {
               serverData = await res.json();
             }
@@ -443,20 +474,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         let cloudRecords: TestRecord[] = [];
         try {
-          cloudRecords = await fetchTestRecordsFromCloud();
+          cloudRecords = await fetchMyTestRecordsFromCloud(savedNum);
         } catch (e) {
-          console.warn('Firebase cloud testRecords fetch notice:', e);
+          console.warn('Firebase cloud own testRecords fetch notice:', e);
         }
 
         const recordsMap = new Map<string, TestRecord>();
         [...(serverData?.testRecords || []), ...(localRecords || []), ...(cloudRecords || [])].forEach(
           (r: TestRecord) => {
-            if (!r?.id || !r?.testTitle || r?.studentNumber === undefined) return;
+            if (!r?.id || !r?.testTitle || r?.studentNumber !== savedNum) return;
             const dedupKey = `${r.testTitle}__${r.studentNumber}`;
             recordsMap.set(dedupKey, mergeTestRecord(recordsMap.get(dedupKey), r));
           }
         );
         const mergedRecords = Array.from(recordsMap.values());
+
+        fetchLeaderboardTestTitles()
+          .then((titles) => {
+            if (isMounted && titles.length > 0) {
+              setLeaderboardTestTitles((prev) => Array.from(new Set([...prev, ...titles])));
+            }
+          })
+          .catch(() => {});
 
         let cloudPosts: ForumPost[] = [];
         try {
@@ -574,6 +613,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
+                studentNumber: savedNum,
                 materials: mergedMaterials,
                 quizzes: mergedQuizzes,
                 testRecords: mergedRecords,
@@ -741,15 +781,41 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => unsubscribe();
   }, []);
 
-  // Real-time Firestore subscription for Test Records
+  // Real-time Firestore subscription ONLY for the logged-in user's own Test Records
   useEffect(() => {
-    const unsubscribe = subscribeToTestRecords((cloudList) => {
-      if (!cloudList) return;
+    if (!currentStudentNum) return;
+    let cancelled = false;
+
+    // Purge any stale records belonging to other accounts when switching accounts
+    setTestRecords((prev) => prev.filter((r) => r.studentNumber === currentStudentNum));
+
+    // Fetch own records for current account from server + cloud
+    if (!isStaticDeployment()) {
+      fetch(`/api/data?studentNumber=${encodeURIComponent(String(currentStudentNum))}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (cancelled || !Array.isArray(data?.testRecords)) return;
+          setTestRecords((prev) => {
+            const map = new Map<string, TestRecord>();
+            [...prev, ...data.testRecords].forEach((r: TestRecord) => {
+              if (!r?.id || !r?.testTitle || r.studentNumber !== currentStudentNum) return;
+              const key = `${r.testTitle}__${r.studentNumber}`;
+              map.set(key, mergeTestRecord(map.get(key), r));
+            });
+            return Array.from(map.values());
+          });
+        })
+        .catch(() => {});
+    }
+
+    const unsubscribe = subscribeToMyTestRecords(currentStudentNum, (cloudList) => {
+      if (cancelled || !cloudList) return;
       setTestRecords((prev) => {
-        if (cloudList.length === 0 && prev.length === 0) return prev;
+        const ownPrev = prev.filter((r) => r.studentNumber === currentStudentNum);
+        if (cloudList.length === 0 && ownPrev.length === 0) return ownPrev;
         const map = new Map<string, TestRecord>();
-        [...prev, ...cloudList].forEach((r) => {
-          if (!r?.id || !r?.testTitle || r?.studentNumber === undefined) return;
+        [...ownPrev, ...cloudList].forEach((r) => {
+          if (!r?.id || !r?.testTitle || r.studentNumber !== currentStudentNum) return;
           const key = `${r.testTitle}__${r.studentNumber}`;
           map.set(key, mergeTestRecord(map.get(key), r));
         });
@@ -760,8 +826,39 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return merged;
       });
     });
-    return () => unsubscribe();
-  }, []);
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [currentStudentNum]);
+
+  // Real-time Firestore subscriptions strictly limited to TOP-N anonymous leaderboards
+  useEffect(() => {
+    if (!activeTestTitle) return;
+    setCloudTopRankings([]);
+    setCloudTopGrowthRankings([]);
+
+    const unsubRank = subscribeToPublicTopLeaderboard(
+      activeTestTitle,
+      PUBLIC_TOP_LIMIT,
+      (topList) => {
+        setCloudTopRankings(limitTopRankings(topList, PUBLIC_TOP_LIMIT));
+      }
+    );
+    const unsubGrowth = subscribeToPublicTopGrowthLeaderboard(
+      activeTestTitle,
+      PUBLIC_TOP_LIMIT,
+      (topGrowthList) => {
+        setCloudTopGrowthRankings(limitTopGrowthRankings(topGrowthList, PUBLIC_TOP_LIMIT));
+      }
+    );
+
+    return () => {
+      unsubRank();
+      unsubGrowth();
+    };
+  }, [activeTestTitle]);
 
   // Real-time Firestore subscription for Forum Posts
   useEffect(() => {
@@ -821,15 +918,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   useEffect(() => {
     if (!isHydratedRef.current) return;
-    setPersistentItem(STORAGE_KEYS.TEST_RECORDS, testRecords);
-    if (!isStaticDeployment()) {
+    const ownOnly = testRecords.filter((r) => r.studentNumber === currentStudentNum);
+    setPersistentItem(STORAGE_KEYS.TEST_RECORDS, ownOnly);
+    if (!isStaticDeployment() && ownOnly.length > 0) {
       fetch('/api/data/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ testRecords }),
+        body: JSON.stringify({ studentNumber: currentStudentNum, testRecords: ownOnly }),
       }).catch(() => {});
     }
-  }, [testRecords]);
+  }, [testRecords, currentStudentNum]);
 
   useEffect(() => {
     if (!isHydratedRef.current) return;
@@ -1105,6 +1203,120 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [customSubjects]);
 
   // Score Management
+  const myActiveTestRecord = useMemo(() => {
+    return testRecords.find(
+      (r) => r.testTitle === activeTestTitle && r.studentNumber === currentStudentNum
+    );
+  }, [testRecords, activeTestTitle, currentStudentNum]);
+
+  const myPrevTestRecord = useMemo(() => {
+    const others = testRecords
+      .filter((r) => r.studentNumber === currentStudentNum && r.testTitle !== activeTestTitle)
+      .sort((a, b) => (a.testDate || '').localeCompare(b.testDate || ''));
+    return others.length > 0 ? others[others.length - 1] : undefined;
+  }, [testRecords, currentStudentNum, activeTestTitle]);
+
+  const myActiveGrowth = useMemo(() => {
+    if (!myActiveTestRecord || !myPrevTestRecord) return null;
+    const prevMax = getRecordMaxScore(myPrevTestRecord);
+    const currMax = getRecordMaxScore(myActiveTestRecord);
+    const prevRate = calcRatePercent(myPrevTestRecord.totalScore, prevMax) ?? 0;
+    const currRate = calcRatePercent(myActiveTestRecord.totalScore, currMax) ?? 0;
+    return {
+      delta: myActiveTestRecord.totalScore - myPrevTestRecord.totalScore,
+      rateDelta: Math.round((currRate - prevRate) * 10) / 10,
+      hasDifferentMax: prevMax !== currMax,
+    };
+  }, [myActiveTestRecord, myPrevTestRecord]);
+
+  // Mirror only the logged-in user's own test records to anonymous leaderboards
+  useEffect(() => {
+    if (!isHydratedRef.current || !currentStudentNum) return;
+    const ownRecords = testRecords
+      .filter((r) => r.studentNumber === currentStudentNum)
+      .sort((a, b) => (a.testDate || '').localeCompare(b.testDate || ''));
+    ownRecords.forEach((rec, idx) => {
+      const prevRec = idx > 0 ? ownRecords[idx - 1] : undefined;
+      let growthInfo: { delta: number; rateDelta: number; hasDifferentMax: boolean } | null = null;
+      if (prevRec) {
+        const prevMax = getRecordMaxScore(prevRec);
+        const currMax = getRecordMaxScore(rec);
+        const prevRate = calcRatePercent(prevRec.totalScore, prevMax) ?? 0;
+        const currRate = calcRatePercent(rec.totalScore, currMax) ?? 0;
+        growthInfo = {
+          delta: rec.totalScore - prevRec.totalScore,
+          rateDelta: Math.round((currRate - prevRate) * 10) / 10,
+          hasDifferentMax: prevMax !== currMax,
+        };
+      }
+      syncTestRecordToAnonymousLeaderboards(rec, growthInfo).catch(() => {});
+    });
+  }, [testRecords, currentStudentNum]);
+
+  // Fetch server-side rank standing & participant count (never downloads other students' scores)
+  useEffect(() => {
+    if (!activeTestTitle) return;
+    let cancelled = false;
+
+    const myScoreRate = myActiveTestRecord
+      ? (calcRatePercent(myActiveTestRecord.totalScore, getRecordMaxScore(myActiveTestRecord)) ?? null)
+      : null;
+    const myRateDelta = myActiveGrowth ? myActiveGrowth.rateDelta : null;
+
+    const loadStanding = async () => {
+      const [cloudStanding, serverRes] = await Promise.all([
+        fetchMyServerRankStanding(activeTestTitle, myScoreRate, myRateDelta),
+        !isStaticDeployment()
+          ? fetch(
+              `/api/data/rankings?testTitle=${encodeURIComponent(activeTestTitle)}&studentNumber=${encodeURIComponent(
+                String(currentStudentNum)
+              )}&limit=${PUBLIC_TOP_LIMIT}`
+            )
+              .then((r) => (r.ok ? r.json() : null))
+              .catch(() => null)
+          : Promise.resolve(null),
+      ]);
+
+      if (cancelled) return;
+
+      if (Array.isArray(serverRes?.testTitles) && serverRes.testTitles.length > 0) {
+        setLeaderboardTestTitles((prev) => Array.from(new Set([...prev, ...serverRes.testTitles])));
+      }
+
+      const serverTotal = Number(serverRes?.totalParticipants) || 0;
+      const serverMyRank =
+        typeof serverRes?.myStanding?.myRank === 'number' ? serverRes.myStanding.myRank : null;
+      const serverGrowthRank =
+        typeof serverRes?.myStanding?.growthRank === 'number'
+          ? serverRes.myStanding.growthRank
+          : null;
+
+      setServerStandingCounts({
+        totalParticipants: Math.max(cloudStanding.totalParticipants, serverTotal),
+        myRank: cloudStanding.myRank ?? serverMyRank,
+        growthRank: cloudStanding.growthRank ?? serverGrowthRank,
+        serverTopRankings: Array.isArray(serverRes?.topRankings) ? serverRes.topRankings : [],
+        serverTopGrowthRankings: Array.isArray(serverRes?.topGrowthRankings)
+          ? serverRes.topGrowthRankings
+          : [],
+        serverGrowthDelta:
+          typeof serverRes?.myStanding?.growthDelta === 'number'
+            ? serverRes.myStanding.growthDelta
+            : null,
+        serverGrowthRateDelta:
+          typeof serverRes?.myStanding?.growthRateDelta === 'number'
+            ? serverRes.myStanding.growthRateDelta
+            : null,
+        serverHasDifferentMax: Boolean(serverRes?.myStanding?.hasDifferentMax),
+      });
+    };
+
+    loadStanding();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTestTitle, currentStudentNum, myActiveTestRecord, myActiveGrowth, standingRefreshTick]);
+
   const saveMyScore = (
     testTitle: string,
     testDate: string,
@@ -1132,7 +1344,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
 
     const total: number = subjectDetails.reduce((acc, d) => acc + d.score, 0);
-    const totalMax: number = subjectDetails.reduce((acc, d) => acc + d.maxScore, 0);
+    const totalMax: number = Math.max(1, subjectDetails.reduce((acc, d) => acc + d.maxScore, 0));
     const nowIso = new Date().toISOString();
 
     const existingRecord = testRecords.find(
@@ -1162,21 +1374,46 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           updatedAt: nowIso,
         };
 
+    const otherUserRecords = testRecords
+      .filter((r) => r.studentNumber === currentStudentNum && r.testTitle !== testTitle)
+      .sort((a, b) => (a.testDate || '').localeCompare(b.testDate || ''));
+    const priorRecord =
+      otherUserRecords.length > 0 ? otherUserRecords[otherUserRecords.length - 1] : undefined;
+
+    let growthInfo: { delta: number; rateDelta: number; hasDifferentMax: boolean } | null = null;
+    if (priorRecord) {
+      const prevMax = getRecordMaxScore(priorRecord);
+      const prevRate = calcRatePercent(priorRecord.totalScore, prevMax) ?? 0;
+      const currRate = calcRatePercent(total, totalMax) ?? 0;
+      growthInfo = {
+        delta: total - priorRecord.totalScore,
+        rateDelta: Math.round((currRate - prevRate) * 10) / 10,
+        hasDifferentMax: prevMax !== totalMax,
+      };
+    }
+
     setTestRecords((prev) => {
-      const existingIndex = prev.findIndex(
+      const ownPrev = prev.filter((r) => r.studentNumber === currentStudentNum);
+      const existingIndex = ownPrev.findIndex(
         (r) => r.testTitle === testTitle && r.studentNumber === currentStudentNum
       );
       if (existingIndex >= 0) {
-        const updated = [...prev];
+        const updated = [...ownPrev];
         updated[existingIndex] = { ...nextRecord, id: updated[existingIndex].id };
         return updated;
       }
-      return [nextRecord, ...prev];
+      return [nextRecord, ...ownPrev];
     });
 
-    saveTestRecordToCloud(nextRecord).catch((e) => {
-      console.warn('Test record cloud save notice:', e);
-    });
+    setLeaderboardTestTitles((prev) => Array.from(new Set([...prev, testTitle])));
+
+    saveTestRecordToCloud(nextRecord, growthInfo)
+      .then(() => {
+        setStandingRefreshTick((t) => t + 1);
+      })
+      .catch((e) => {
+        console.warn('Test record cloud save notice:', e);
+      });
   };
 
   const availableTestTitles = useMemo(() => {
@@ -1184,95 +1421,151 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     periodicTests.forEach((p) => {
       if (p.title) set.add(p.title);
     });
+    leaderboardTestTitles.forEach((t) => {
+      if (t) set.add(t);
+    });
     if (activeTestTitle) set.add(activeTestTitle);
-    testRecords.forEach((r) => set.add(r.testTitle));
+    testRecords.forEach((r) => {
+      if (r.testTitle) set.add(r.testTitle);
+    });
     if (set.size === 0) set.add('第1回 定期考査');
     return Array.from(set);
-  }, [periodicTests, testRecords, activeTestTitle]);
+  }, [periodicTests, leaderboardTestTitles, testRecords, activeTestTitle]);
 
-  const currentTestRecords = useMemo(() => {
-    return testRecords.filter((r) => r.testTitle === activeTestTitle);
-  }, [testRecords, activeTestTitle]);
+  // Anonymous TOP-N Rankings (strictly <= PUBLIC_TOP_LIMIT; 6th+ never queried or stored)
+  const anonymousRankings = useMemo((): AnonymousRankItem[] => {
+    if (cloudTopRankings.length > 0) {
+      return limitTopRankings(cloudTopRankings, PUBLIC_TOP_LIMIT);
+    }
+    if (serverStandingCounts.serverTopRankings.length > 0) {
+      return limitTopRankings(serverStandingCounts.serverTopRankings, PUBLIC_TOP_LIMIT);
+    }
+    if (myActiveTestRecord) {
+      const maxScore = getRecordMaxScore(myActiveTestRecord);
+      return [
+        {
+          rank: 1,
+          score: myActiveTestRecord.totalScore,
+          maxScore,
+          scoreRate: calcRatePercent(myActiveTestRecord.totalScore, maxScore),
+        },
+      ];
+    }
+    return [];
+  }, [cloudTopRankings, serverStandingCounts.serverTopRankings, myActiveTestRecord]);
 
-  const prevTestRecords = useMemo(() => {
-    const others = testRecords
-      .filter((r) => r.testTitle !== activeTestTitle)
-      .sort((a, b) => (a.testDate || '').localeCompare(b.testDate || ''));
-    const latestByStudent = new Map<number, TestRecord>();
-    others.forEach((r) => {
-      latestByStudent.set(r.studentNumber, r);
-    });
-    return Array.from(latestByStudent.values());
-  }, [testRecords, activeTestTitle]);
+  // Anonymous TOP-N Growth Rankings (strictly <= PUBLIC_TOP_LIMIT)
+  const anonymousGrowthRankings = useMemo((): AnonymousGrowthItem[] => {
+    if (cloudTopGrowthRankings.length > 0) {
+      return limitTopGrowthRankings(cloudTopGrowthRankings, PUBLIC_TOP_LIMIT);
+    }
+    if (serverStandingCounts.serverTopGrowthRankings.length > 0) {
+      return limitTopGrowthRankings(serverStandingCounts.serverTopGrowthRankings, PUBLIC_TOP_LIMIT);
+    }
+    if (myActiveGrowth) {
+      return [
+        {
+          rank: 1,
+          delta: myActiveGrowth.delta,
+          rateDelta: myActiveGrowth.rateDelta,
+          hasDifferentMax: myActiveGrowth.hasDifferentMax,
+        },
+      ];
+    }
+    return [];
+  }, [cloudTopGrowthRankings, serverStandingCounts.serverTopGrowthRankings, myActiveGrowth]);
 
-  // Anonymous Rankings
-  const anonymousRankings = useMemo(() => {
-    const items = currentTestRecords.map((r) => ({
-      studentNumber: r.studentNumber,
-      score: r.totalScore,
-      maxScore: getRecordMaxScore(r),
-    }));
-    return calculateAnonymousRankings(items);
-  }, [currentTestRecords]);
+  // TOP-N Summary for TAB 2 (never computed from lower-tier student records)
+  const topScoreSummary = useMemo((): TopScoreSummary | null => {
+    return calculateTopScoreSummary(anonymousRankings, PUBLIC_TOP_LIMIT);
+  }, [anonymousRankings]);
 
-  // Anonymous Growth Rankings
-  const anonymousGrowthRankings = useMemo(() => {
-    const prevItems = prevTestRecords.map((r) => ({
-      studentNumber: r.studentNumber,
-      score: r.totalScore,
-      maxScore: getRecordMaxScore(r),
-    }));
-    const currItems = currentTestRecords.map((r) => ({
-      studentNumber: r.studentNumber,
-      score: r.totalScore,
-      maxScore: getRecordMaxScore(r),
-    }));
-    return calculateAnonymousGrowthRankings(prevItems, currItems);
-  }, [prevTestRecords, currentTestRecords]);
-
-  // Personal Standing
+  // Personal Standing (Private to logged-in student only; rank/counts computed server-side)
   const personalStanding = useMemo((): PersonalStanding => {
-    const items = currentTestRecords.map((r) => ({
-      studentNumber: r.studentNumber,
-      score: r.totalScore,
-      maxScore: getRecordMaxScore(r),
-    }));
-    const standing = calculatePersonalStanding(items, currentStudentNum);
+    if (!myActiveTestRecord) {
+      return {
+        studentNumber: currentStudentNum,
+        totalScore: 0,
+        rank: 0,
+        totalParticipants: serverStandingCounts.totalParticipants,
+        classMax: topScoreSummary?.topMaxScore,
+        classMaxTotal: topScoreSummary?.topMaxTotal,
+      };
+    }
 
-    const prevItems = prevTestRecords.map((r) => ({
-      studentNumber: r.studentNumber,
-      score: r.totalScore,
-      maxScore: getRecordMaxScore(r),
-    }));
-    const growth = calculatePersonalGrowth(prevItems, items, currentStudentNum);
+    const myMax = getRecordMaxScore(myActiveTestRecord);
+    const myRate = calcRatePercent(myActiveTestRecord.totalScore, myMax);
+    const totalParticipants = Math.max(
+      serverStandingCounts.totalParticipants,
+      anonymousRankings.length,
+      1
+    );
+
+    let resolvedRank = serverStandingCounts.myRank ?? 0;
+    if (!resolvedRank) {
+      const matchedTop = anonymousRankings.find(
+        (item) =>
+          item.score === myActiveTestRecord.totalScore &&
+          (item.scoreRate === undefined || myRate === undefined || Math.abs(item.scoreRate - myRate) < 0.05)
+      );
+      if (matchedTop) {
+        resolvedRank = matchedTop.rank;
+      } else if (totalParticipants === 1) {
+        resolvedRank = 1;
+      }
+    }
+
+    const growthDelta =
+      myActiveGrowth?.delta ?? serverStandingCounts.serverGrowthDelta ?? undefined;
+    const growthRateDelta =
+      myActiveGrowth?.rateDelta ?? serverStandingCounts.serverGrowthRateDelta ?? undefined;
+    const hasDifferentMax =
+      myActiveGrowth?.hasDifferentMax ?? serverStandingCounts.serverHasDifferentMax ?? false;
+
+    let resolvedGrowthRank = serverStandingCounts.growthRank ?? undefined;
+    if (!resolvedGrowthRank && growthDelta !== undefined) {
+      const matchedGrowth = anonymousGrowthRankings.find(
+        (item) =>
+          item.delta === growthDelta &&
+          (item.rateDelta === undefined ||
+            growthRateDelta === undefined ||
+            Math.abs(item.rateDelta - growthRateDelta) < 0.05)
+      );
+      if (matchedGrowth) {
+        resolvedGrowthRank = matchedGrowth.rank;
+      } else if (anonymousGrowthRankings.length === 1) {
+        resolvedGrowthRank = 1;
+      }
+    }
 
     return {
       studentNumber: currentStudentNum,
-      totalScore: standing.myScore ?? 0,
-      totalMaxScore: standing.myMaxScore ?? undefined,
-      scoreRate: standing.myScoreRate ?? undefined,
-      rank: standing.myRank ?? 0,
-      totalParticipants: standing.totalParticipants,
-      classAverage: standing.classAverage,
-      classAverageRate: standing.classAverageRate ?? undefined,
-      classMax: standing.classMax,
-      classMaxTotal: standing.classMaxTotal ?? undefined,
-      growthDelta: growth.growthDelta ?? undefined,
-      growthRateDelta: growth.growthRateDelta ?? undefined,
-      hasDifferentMax: growth.hasDifferentMax,
-      growthRank: growth.growthRank ?? undefined,
+      totalScore: myActiveTestRecord.totalScore,
+      totalMaxScore: myMax,
+      scoreRate: myRate,
+      rank: resolvedRank,
+      totalParticipants,
+      classAverage: topScoreSummary?.topAverageScore,
+      classAverageRate: topScoreSummary?.topAverageRate,
+      classMax: topScoreSummary?.topMaxScore ?? myActiveTestRecord.totalScore,
+      classMaxTotal: topScoreSummary?.topMaxTotal ?? myMax,
+      growthDelta,
+      growthRateDelta,
+      hasDifferentMax,
+      growthRank: resolvedGrowthRank,
     };
-  }, [currentTestRecords, prevTestRecords, currentStudentNum]);
+  }, [
+    currentStudentNum,
+    myActiveTestRecord,
+    myActiveGrowth,
+    serverStandingCounts,
+    anonymousRankings,
+    anonymousGrowthRankings,
+    topScoreSummary,
+  ]);
 
-  // Score Distribution
-  const scoreDistribution = useMemo(() => {
-    const scores = currentTestRecords.map((r) => r.totalScore);
-    const maxTotal =
-      currentTestRecords.length > 0
-        ? Math.max(...currentTestRecords.map(getRecordMaxScore))
-        : 500;
-    return calculateDistribution(scores, maxTotal);
-  }, [currentTestRecords]);
+  // Deprecated whole-class distribution removed for privacy
+  const scoreDistribution: ScoreDistributionBin[] = [];
 
   // Quiz Handling (Cloud-synced bestScore, attemptCount, category, quizTitle)
   const submitQuiz = (quizId: string, answers: number[]) => {
@@ -2062,6 +2355,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         deletePeriodicTest,
         anonymousRankings,
         anonymousGrowthRankings,
+        topScoreSummary,
         personalStanding,
         scoreDistribution,
         quizzes,

@@ -10,10 +10,23 @@ import {
   onSnapshot,
   getDocs,
   writeBatch,
+  query,
+  where,
+  orderBy,
+  limit,
+  getCountFromServer,
   Firestore,
 } from 'firebase/firestore';
 import firebaseAppletConfig from '../../firebase-applet-config.json';
 import { FIRESTORE_CHUNK_SIZE, splitStringIntoChunks } from './fileProcessing';
+import {
+  PUBLIC_TOP_LIMIT,
+  AnonymousRankEntry,
+  AnonymousGrowthEntry,
+  calcRatePercent,
+  calculateAnonymousRankingsFromEntries,
+  calculateAnonymousGrowthFromEntries,
+} from './privacyRankings';
 import { Student, StudyMaterial, StudentPrediction, WeeklyQuiz, TestRecord, ForumPost, QuizResult, PeriodicTestSchedule } from '../types';
 
 /**
@@ -58,6 +71,8 @@ export const COLLECTIONS = {
   MATERIALS: 'materials',
   QUIZZES: 'quizzes',
   TEST_RECORDS: 'testRecords',
+  TEST_LEADERBOARDS: 'testLeaderboards',
+  GROWTH_LEADERBOARDS: 'growthLeaderboards',
   POSTS: 'posts',
   CUSTOM_SUBJECTS: 'customSubjects',
   QUIZ_SUBMISSIONS: 'quizSubmissions',
@@ -940,10 +955,114 @@ export function subscribeToPosts(
   }
 }
 
+function hashStringHex(str: string): string {
+  let h1 = 0x811c9dc5;
+  let h2 = 0x9e3779b9;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    h1 ^= c;
+    h1 = Math.imul(h1, 0x01000193);
+    h2 = Math.imul(h2 ^ c, 0x85ebca6b);
+  }
+  return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
+}
+
+export function toTestLeaderboardId(testTitle: string): string {
+  return `test_${hashStringHex((testTitle || '').trim())}`;
+}
+
+export function toOpaqueLeaderboardEntryId(testTitle: string, studentNumber: number): string {
+  return `entry_${hashStringHex(`classhub_1_8_anon_v1::${(testTitle || '').trim()}::${studentNumber}`)}`;
+}
+
+function getRecordMaxForLeaderboard(record: TestRecord): number {
+  if (typeof record.totalMaxScore === 'number' && record.totalMaxScore > 0) {
+    return record.totalMaxScore;
+  }
+  if (Array.isArray(record.subjectDetails) && record.subjectDetails.length > 0) {
+    const sum = record.subjectDetails.reduce((acc, d) => acc + (Number(d.maxScore) || 100), 0);
+    if (sum > 0) return sum;
+  }
+  if (record.scores) {
+    const keys = Object.keys(record.scores).filter(
+      (k) => record.scores[k] !== undefined && record.scores[k] !== null
+    );
+    if (keys.length > 0) {
+      return keys.reduce((acc, k) => acc + (Number(record.maxScores?.[k] ?? 100) || 100), 0);
+    }
+  }
+  return 500;
+}
+
 /**
- * Saves or updates a test score record in Firebase Firestore (`testRecords` collection).
+ * Mirrors a single TestRecord (plus optional growth delta) to the anonymous
+ * per-test leaderboard subcollections so public TOP-N queries never touch PII.
  */
-export async function saveTestRecordToCloud(record: TestRecord): Promise<void> {
+export async function syncTestRecordToAnonymousLeaderboards(
+  record: TestRecord,
+  growthInfo?: { delta: number; rateDelta: number; hasDifferentMax: boolean } | null
+): Promise<void> {
+  if (!record?.testTitle || record.studentNumber === undefined) return;
+  const testId = toTestLeaderboardId(record.testTitle);
+  const opaqueId = toOpaqueLeaderboardEntryId(record.testTitle, record.studentNumber);
+  const maxScore = Math.max(1, getRecordMaxForLeaderboard(record));
+  const scoreRate = calcRatePercent(record.totalScore, maxScore) ?? 0;
+  const nowIso = record.updatedAt || new Date().toISOString();
+
+  await setDoc(
+    doc(db, COLLECTIONS.TEST_LEADERBOARDS, testId),
+    sanitizeForFirestore({
+      id: testId,
+      testTitle: record.testTitle.slice(0, 128),
+      updatedAt: nowIso,
+    }),
+    { merge: true }
+  );
+
+  await setDoc(
+    doc(db, COLLECTIONS.TEST_LEADERBOARDS, testId, 'entries', opaqueId),
+    sanitizeForFirestore({
+      score: record.totalScore,
+      maxScore,
+      scoreRate,
+      updatedAt: nowIso,
+    }),
+    { merge: true }
+  );
+
+  if (growthInfo) {
+    await setDoc(
+      doc(db, COLLECTIONS.GROWTH_LEADERBOARDS, testId),
+      sanitizeForFirestore({
+        id: testId,
+        testTitle: record.testTitle.slice(0, 128),
+        updatedAt: nowIso,
+      }),
+      { merge: true }
+    );
+
+    await setDoc(
+      doc(db, COLLECTIONS.GROWTH_LEADERBOARDS, testId, 'entries', opaqueId),
+      sanitizeForFirestore({
+        delta: growthInfo.delta,
+        rateDelta: growthInfo.rateDelta,
+        hasDifferentMax: Boolean(growthInfo.hasDifferentMax),
+        updatedAt: nowIso,
+      }),
+      { merge: true }
+    );
+  }
+}
+
+/**
+ * Saves or updates a student's own test score record in Firebase Firestore
+ * (`testRecords` collection) and updates their anonymous entry in `testLeaderboards`
+ * (and `growthLeaderboards` when prior test history exists).
+ */
+export async function saveTestRecordToCloud(
+  record: TestRecord,
+  growthInfo?: { delta: number; rateDelta: number; hasDifferentMax: boolean } | null
+): Promise<void> {
   try {
     const docId = toSafeFirestoreId(record.id);
     const payload = sanitizeForFirestore({
@@ -953,7 +1072,8 @@ export async function saveTestRecordToCloud(record: TestRecord): Promise<void> {
     });
     const docRef = doc(db, COLLECTIONS.TEST_RECORDS, docId);
     await setDoc(docRef, payload, { merge: true });
-    console.info(`[Firebase] Saved test record to Firestore: ${docId}`);
+    await syncTestRecordToAnonymousLeaderboards(record, growthInfo);
+    console.info(`[Firebase] Saved test record and anonymous leaderboard entry: ${docId}`);
   } catch (err: any) {
     const errorMsg = err?.message || String(err);
     console.error('[Firebase] Failed to save test record:', errorMsg);
@@ -962,15 +1082,22 @@ export async function saveTestRecordToCloud(record: TestRecord): Promise<void> {
 }
 
 /**
- * Fetches all test score records from Firebase Firestore once.
+ * Fetches ONLY the logged-in student's own test score records from Firestore.
+ * Uses `where('studentNumber', '==', studentNumber)` so other students' raw records
+ * are never transferred over the network.
  */
-export async function fetchTestRecordsFromCloud(): Promise<TestRecord[]> {
+export async function fetchMyTestRecordsFromCloud(studentNumber: number): Promise<TestRecord[]> {
+  if (!studentNumber) return [];
   try {
-    const snap = await getDocs(collection(db, COLLECTIONS.TEST_RECORDS));
+    const q = query(
+      collection(db, COLLECTIONS.TEST_RECORDS),
+      where('studentNumber', '==', studentNumber)
+    );
+    const snap = await getDocs(q);
     const list: TestRecord[] = [];
     snap.forEach((d) => {
       const item = d.data() as TestRecord;
-      if (item && item.testTitle && item.studentNumber !== undefined) {
+      if (item && item.testTitle && item.studentNumber === studentNumber) {
         list.push({
           ...item,
           id: item.id || d.id,
@@ -979,26 +1106,31 @@ export async function fetchTestRecordsFromCloud(): Promise<TestRecord[]> {
     });
     return list;
   } catch (err: any) {
-    console.error('[Firebase] Error fetching test records:', err?.message || err);
+    console.error('[Firebase] Error fetching own test records:', err?.message || err);
     return [];
   }
 }
 
 /**
- * Subscribes to real-time updates for test score records across all devices.
+ * Subscribes ONLY to the logged-in student's own test records in Firestore.
  */
-export function subscribeToTestRecords(
+export function subscribeToMyTestRecords(
+  studentNumber: number,
   onUpdate: (records: TestRecord[]) => void
 ): () => void {
+  if (!studentNumber) return () => {};
   try {
-    const colRef = collection(db, COLLECTIONS.TEST_RECORDS);
+    const q = query(
+      collection(db, COLLECTIONS.TEST_RECORDS),
+      where('studentNumber', '==', studentNumber)
+    );
     return onSnapshot(
-      colRef,
+      q,
       (snapshot) => {
         const list: TestRecord[] = [];
         snapshot.forEach((d) => {
           const item = d.data() as TestRecord;
-          if (item && item.testTitle && item.studentNumber !== undefined) {
+          if (item && item.testTitle && item.studentNumber === studentNumber) {
             list.push({
               ...item,
               id: item.id || d.id,
@@ -1008,14 +1140,230 @@ export function subscribeToTestRecords(
         onUpdate(list);
       },
       (error) => {
-        console.error('Firestore testRecords subscription error:', error);
+        console.error('Firestore own testRecords subscription error:', error);
       }
     );
   } catch (e: any) {
-    console.error('Failed to attach testRecords listener:', e);
+    console.error('Failed to attach own testRecords listener:', e);
     return () => {};
   }
 }
 
+/**
+ * Fetches available test titles from `testLeaderboards` metadata docs without downloading any scores.
+ */
+export async function fetchLeaderboardTestTitles(): Promise<string[]> {
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.TEST_LEADERBOARDS));
+    const titles: string[] = [];
+    snap.forEach((d) => {
+      const data = d.data();
+      if (data && typeof data.testTitle === 'string' && data.testTitle.trim()) {
+        titles.push(data.testTitle.trim());
+      }
+    });
+    return titles;
+  } catch (err: any) {
+    console.warn('[Firebase] Error fetching leaderboard test titles:', err?.message || err);
+    return [];
+  }
+}
 
+/**
+ * Fetches ONLY the top `limitCount` anonymous score entries for a test via server-side orderBy + limit.
+ * Lower-ranked records are NEVER downloaded to the client.
+ */
+export async function fetchPublicTopLeaderboard(
+  testTitle: string,
+  limitCount = PUBLIC_TOP_LIMIT
+): Promise<AnonymousRankEntry[]> {
+  if (!testTitle) return [];
+  try {
+    const testId = toTestLeaderboardId(testTitle);
+    const q = query(
+      collection(db, COLLECTIONS.TEST_LEADERBOARDS, testId, 'entries'),
+      orderBy('scoreRate', 'desc'),
+      limit(limitCount)
+    );
+    const snap = await getDocs(q);
+    const entries: Array<{ score: number; maxScore: number; scoreRate: number }> = [];
+    snap.forEach((d) => {
+      const data = d.data();
+      if (typeof data.score === 'number' && typeof data.maxScore === 'number' && typeof data.scoreRate === 'number') {
+        entries.push({
+          score: data.score,
+          maxScore: data.maxScore,
+          scoreRate: data.scoreRate,
+        });
+      }
+    });
+    return calculateAnonymousRankingsFromEntries(entries, limitCount);
+  } catch (err: any) {
+    console.warn('[Firebase] Error fetching top leaderboard:', err?.message || err);
+    return [];
+  }
+}
 
+/**
+ * Subscribes in real time ONLY to the top `limitCount` anonymous score entries for a test.
+ */
+export function subscribeToPublicTopLeaderboard(
+  testTitle: string,
+  limitCount: number,
+  onUpdate: (rankings: AnonymousRankEntry[]) => void
+): () => void {
+  if (!testTitle) return () => {};
+  try {
+    const testId = toTestLeaderboardId(testTitle);
+    const q = query(
+      collection(db, COLLECTIONS.TEST_LEADERBOARDS, testId, 'entries'),
+      orderBy('scoreRate', 'desc'),
+      limit(limitCount)
+    );
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const entries: Array<{ score: number; maxScore: number; scoreRate: number }> = [];
+        snapshot.forEach((d) => {
+          const data = d.data();
+          if (typeof data.score === 'number' && typeof data.maxScore === 'number' && typeof data.scoreRate === 'number') {
+            entries.push({
+              score: data.score,
+              maxScore: data.maxScore,
+              scoreRate: data.scoreRate,
+            });
+          }
+        });
+        onUpdate(calculateAnonymousRankingsFromEntries(entries, limitCount));
+      },
+      (error) => {
+        console.warn('Firestore top leaderboard subscription warning:', error);
+      }
+    );
+  } catch (e) {
+    console.warn('Failed to attach top leaderboard listener:', e);
+    return () => {};
+  }
+}
+
+/**
+ * Fetches ONLY the top `limitCount` anonymous growth entries for a test via server-side orderBy + limit.
+ */
+export async function fetchPublicTopGrowthLeaderboard(
+  testTitle: string,
+  limitCount = PUBLIC_TOP_LIMIT
+): Promise<AnonymousGrowthEntry[]> {
+  if (!testTitle) return [];
+  try {
+    const testId = toTestLeaderboardId(testTitle);
+    const q = query(
+      collection(db, COLLECTIONS.GROWTH_LEADERBOARDS, testId, 'entries'),
+      orderBy('rateDelta', 'desc'),
+      limit(limitCount)
+    );
+    const snap = await getDocs(q);
+    const entries: Array<{ delta: number; rateDelta: number; hasDifferentMax?: boolean }> = [];
+    snap.forEach((d) => {
+      const data = d.data();
+      if (typeof data.delta === 'number' && typeof data.rateDelta === 'number') {
+        entries.push({
+          delta: data.delta,
+          rateDelta: data.rateDelta,
+          hasDifferentMax: Boolean(data.hasDifferentMax),
+        });
+      }
+    });
+    return calculateAnonymousGrowthFromEntries(entries, limitCount);
+  } catch (err: any) {
+    console.warn('[Firebase] Error fetching top growth leaderboard:', err?.message || err);
+    return [];
+  }
+}
+
+/**
+ * Subscribes in real time ONLY to the top `limitCount` anonymous growth entries for a test.
+ */
+export function subscribeToPublicTopGrowthLeaderboard(
+  testTitle: string,
+  limitCount: number,
+  onUpdate: (rankings: AnonymousGrowthEntry[]) => void
+): () => void {
+  if (!testTitle) return () => {};
+  try {
+    const testId = toTestLeaderboardId(testTitle);
+    const q = query(
+      collection(db, COLLECTIONS.GROWTH_LEADERBOARDS, testId, 'entries'),
+      orderBy('rateDelta', 'desc'),
+      limit(limitCount)
+    );
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const entries: Array<{ delta: number; rateDelta: number; hasDifferentMax?: boolean }> = [];
+        snapshot.forEach((d) => {
+          const data = d.data();
+          if (typeof data.delta === 'number' && typeof data.rateDelta === 'number') {
+            entries.push({
+              delta: data.delta,
+              rateDelta: data.rateDelta,
+              hasDifferentMax: Boolean(data.hasDifferentMax),
+            });
+          }
+        });
+        onUpdate(calculateAnonymousGrowthFromEntries(entries, limitCount));
+      },
+      (error) => {
+        console.warn('Firestore top growth leaderboard subscription warning:', error);
+      }
+    );
+  } catch (e) {
+    console.warn('Failed to attach top growth leaderboard listener:', e);
+    return () => {};
+  }
+}
+
+/**
+ * Uses Firestore server-side aggregation `getCountFromServer()` to compute the logged-in
+ * user's exact rank and total participant count without downloading any other student's score.
+ */
+export async function fetchMyServerRankStanding(
+  testTitle: string,
+  myScoreRate: number | null,
+  myRateDelta: number | null
+): Promise<{
+  totalParticipants: number;
+  myRank: number | null;
+  growthRank: number | null;
+}> {
+  if (!testTitle) {
+    return { totalParticipants: 0, myRank: null, growthRank: null };
+  }
+  try {
+    const testId = toTestLeaderboardId(testTitle);
+    const entriesCol = collection(db, COLLECTIONS.TEST_LEADERBOARDS, testId, 'entries');
+    const totalSnap = await getCountFromServer(entriesCol);
+    const totalParticipants = totalSnap.data().count;
+
+    let myRank: number | null = null;
+    if (myScoreRate !== null) {
+      const aheadSnap = await getCountFromServer(
+        query(entriesCol, where('scoreRate', '>', myScoreRate))
+      );
+      myRank = aheadSnap.data().count + 1;
+    }
+
+    let growthRank: number | null = null;
+    if (myRateDelta !== null) {
+      const growthCol = collection(db, COLLECTIONS.GROWTH_LEADERBOARDS, testId, 'entries');
+      const aheadGrowthSnap = await getCountFromServer(
+        query(growthCol, where('rateDelta', '>', myRateDelta))
+      );
+      growthRank = aheadGrowthSnap.data().count + 1;
+    }
+
+    return { totalParticipants, myRank, growthRank };
+  } catch (err: any) {
+    console.warn('[Firebase] Error counting server rank standing:', err?.message || err);
+    return { totalParticipants: 0, myRank: null, growthRank: null };
+  }
+}

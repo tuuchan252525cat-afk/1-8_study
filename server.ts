@@ -289,16 +289,200 @@ function saveServerStorage(patch: Partial<ServerData>): ServerData {
   return merged;
 }
 
-// 1. Get full server-persisted data
-app.get('/api/data', (_req, res) => {
+const SERVER_PUBLIC_TOP_LIMIT = 5;
+
+function getServerRecordMaxScore(r: any): number {
+  if (typeof r?.totalMaxScore === 'number' && r.totalMaxScore > 0) {
+    return r.totalMaxScore;
+  }
+  if (Array.isArray(r?.subjectDetails) && r.subjectDetails.length > 0) {
+    const sum = r.subjectDetails.reduce((acc: number, d: any) => acc + (Number(d?.maxScore) || 100), 0);
+    if (sum > 0) return sum;
+  }
+  if (r?.scores && typeof r.scores === 'object') {
+    const keys = Object.keys(r.scores).filter((k) => r.scores[k] !== undefined && r.scores[k] !== null);
+    if (keys.length > 0) {
+      return keys.reduce((acc, k) => acc + (Number(r.maxScores?.[k] ?? 100) || 100), 0);
+    }
+  }
+  return 500;
+}
+
+function calcServerRate(score: number, maxScore: number): number {
+  return Math.round((score / Math.max(1, maxScore)) * 1000) / 10;
+}
+
+// 1. Get server-persisted data (testRecords strictly scoped to requesting studentNumber)
+app.get('/api/data', (req, res) => {
   const data = loadServerStorage();
-  res.json(data);
+  const studentNumber = Number(req.query.studentNumber);
+  const filteredTestRecords =
+    Number.isFinite(studentNumber) && studentNumber > 0
+      ? (data.testRecords || []).filter((r: any) => Number(r?.studentNumber) === studentNumber)
+      : [];
+  res.json({
+    ...data,
+    testRecords: filteredTestRecords,
+  });
+});
+
+// 1b. Privacy-safe server-computed TOP-N anonymous rankings & caller's own standing
+app.get('/api/data/rankings', (req, res) => {
+  try {
+    const data = loadServerStorage();
+    const testTitle = typeof req.query.testTitle === 'string' ? req.query.testTitle.trim() : '';
+    const studentNumber = Number(req.query.studentNumber);
+    const requestedLimit = Number(req.query.limit);
+    const topLimit =
+      Number.isFinite(requestedLimit) && requestedLimit >= 1 && requestedLimit <= 20
+        ? Math.floor(requestedLimit)
+        : SERVER_PUBLIC_TOP_LIMIT;
+
+    const allRecords = data.testRecords || [];
+    const testTitles = Array.from(
+      new Set(allRecords.map((r: any) => r?.testTitle).filter((t: any) => typeof t === 'string' && t.trim()))
+    );
+
+    if (!testTitle) {
+      return res.json({
+        testTitles,
+        topRankings: [],
+        topGrowthRankings: [],
+        totalParticipants: 0,
+        myStanding: null,
+      });
+    }
+
+    const currentRecords = allRecords.filter((r: any) => r?.testTitle === testTitle);
+    const scored = currentRecords.map((r: any) => {
+      const score = Number(r.totalScore) || 0;
+      const maxScore = getServerRecordMaxScore(r);
+      const scoreRate = calcServerRate(score, maxScore);
+      return {
+        studentNumber: Number(r.studentNumber),
+        score,
+        maxScore,
+        scoreRate,
+      };
+    });
+
+    scored.sort((a, b) => {
+      if (Math.abs(b.scoreRate - a.scoreRate) > 1e-9) return b.scoreRate - a.scoreRate;
+      return b.score - a.score;
+    });
+
+    const topRankings: Array<{ rank: number; score: number; maxScore: number; scoreRate: number }> = [];
+    let currentRank = 1;
+    let myRank: number | null = null;
+    for (let i = 0; i < scored.length; i++) {
+      if (i > 0 && scored[i].scoreRate < scored[i - 1].scoreRate - 1e-9) {
+        currentRank = i + 1;
+      }
+      if (Number.isFinite(studentNumber) && scored[i].studentNumber === studentNumber) {
+        myRank = currentRank;
+      }
+      if (currentRank <= topLimit && topRankings.length < topLimit) {
+        topRankings.push({
+          rank: currentRank,
+          score: scored[i].score,
+          maxScore: scored[i].maxScore,
+          scoreRate: scored[i].scoreRate,
+        });
+      }
+    }
+
+    // Compute growth against each student's latest prior test
+    const otherRecords = allRecords
+      .filter((r: any) => r?.testTitle !== testTitle)
+      .sort((a: any, b: any) => String(a?.testDate || '').localeCompare(String(b?.testDate || '')));
+    const latestPrevByStudent = new Map<number, any>();
+    otherRecords.forEach((r: any) => {
+      if (r?.studentNumber !== undefined) latestPrevByStudent.set(Number(r.studentNumber), r);
+    });
+
+    const growthItems: Array<{
+      studentNumber: number;
+      delta: number;
+      rateDelta: number;
+      hasDifferentMax: boolean;
+    }> = [];
+    scored.forEach((curr) => {
+      const prev = latestPrevByStudent.get(curr.studentNumber);
+      if (prev) {
+        const prevScore = Number(prev.totalScore) || 0;
+        const prevMax = getServerRecordMaxScore(prev);
+        const prevRate = calcServerRate(prevScore, prevMax);
+        growthItems.push({
+          studentNumber: curr.studentNumber,
+          delta: curr.score - prevScore,
+          rateDelta: Math.round((curr.scoreRate - prevRate) * 10) / 10,
+          hasDifferentMax: prevMax !== curr.maxScore,
+        });
+      }
+    });
+
+    growthItems.sort((a, b) => {
+      if (Math.abs(b.rateDelta - a.rateDelta) > 1e-9) return b.rateDelta - a.rateDelta;
+      return b.delta - a.delta;
+    });
+
+    const topGrowthRankings: Array<{
+      rank: number;
+      delta: number;
+      rateDelta: number;
+      hasDifferentMax: boolean;
+    }> = [];
+    let growthRank = 1;
+    let myGrowthRank: number | null = null;
+    let myGrowthDelta: number | null = null;
+    let myGrowthRateDelta: number | null = null;
+    let myHasDifferentMax = false;
+
+    for (let i = 0; i < growthItems.length; i++) {
+      if (i > 0 && growthItems[i].rateDelta < growthItems[i - 1].rateDelta - 1e-9) {
+        growthRank = i + 1;
+      }
+      if (Number.isFinite(studentNumber) && growthItems[i].studentNumber === studentNumber) {
+        myGrowthRank = growthRank;
+        myGrowthDelta = growthItems[i].delta;
+        myGrowthRateDelta = growthItems[i].rateDelta;
+        myHasDifferentMax = growthItems[i].hasDifferentMax;
+      }
+      if (growthRank <= topLimit && topGrowthRankings.length < topLimit) {
+        topGrowthRankings.push({
+          rank: growthRank,
+          delta: growthItems[i].delta,
+          rateDelta: growthItems[i].rateDelta,
+          hasDifferentMax: growthItems[i].hasDifferentMax,
+        });
+      }
+    }
+
+    res.json({
+      testTitles,
+      topRankings,
+      topGrowthRankings,
+      totalParticipants: scored.length,
+      myStanding: Number.isFinite(studentNumber)
+        ? {
+            myRank,
+            growthRank: myGrowthRank,
+            growthDelta: myGrowthDelta,
+            growthRateDelta: myGrowthRateDelta,
+            hasDifferentMax: myHasDifferentMax,
+          }
+        : null,
+    });
+  } catch (err: any) {
+    console.error('Error computing /api/data/rankings:', err);
+    res.status(500).json({ error: 'Rankings computation failed' });
+  }
 });
 
 // 2. Safe bidirectional sync: merges client and server items by unique ID (union, never drops items)
 app.post('/api/data/sync', (req, res) => {
   try {
-    const clientData: Partial<ServerData> = req.body || {};
+    const clientData: Partial<ServerData> & { studentNumber?: number } = req.body || {};
     const serverData = loadServerStorage();
 
     // Union merge materials
@@ -313,10 +497,18 @@ app.post('/api/data/sync', (req, res) => {
     (clientData.quizzes || []).forEach((q) => { if (q?.id) quizzesMap.set(q.id, q); });
     const mergedQuizzes = Array.from(quizzesMap.values());
 
-    // Union merge test records
+    // Union merge test records on disk (keyed by testTitle + studentNumber so partial client records don't drop others)
     const recordsMap = new Map<string, any>();
-    (serverData.testRecords || []).forEach((r) => { if (r?.id) recordsMap.set(r.id, r); });
-    (clientData.testRecords || []).forEach((r) => { if (r?.id) recordsMap.set(r.id, r); });
+    (serverData.testRecords || []).forEach((r) => {
+      if (r?.testTitle && r?.studentNumber !== undefined) {
+        recordsMap.set(`${r.testTitle}__${r.studentNumber}`, r);
+      }
+    });
+    (clientData.testRecords || []).forEach((r) => {
+      if (r?.testTitle && r?.studentNumber !== undefined) {
+        recordsMap.set(`${r.testTitle}__${r.studentNumber}`, r);
+      }
+    });
     const mergedRecords = Array.from(recordsMap.values());
 
     // Union merge posts (excluding deleted October posts)
@@ -346,7 +538,19 @@ app.post('/api/data/sync', (req, res) => {
       quizSubmissions: mergedSubs,
     });
 
-    res.json({ success: true, data: saved });
+    const callerNum = Number(clientData.studentNumber);
+    const callerRecords =
+      Number.isFinite(callerNum) && callerNum > 0
+        ? (saved.testRecords || []).filter((r: any) => Number(r?.studentNumber) === callerNum)
+        : [];
+
+    res.json({
+      success: true,
+      data: {
+        ...saved,
+        testRecords: callerRecords,
+      },
+    });
   } catch (err: any) {
     console.error('Error during /api/data/sync:', err);
     res.status(500).json({ error: 'Sync failed', message: err.message });

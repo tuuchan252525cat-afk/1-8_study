@@ -1,8 +1,11 @@
 /**
  * Privacy-preserving ranking and distribution calculations for ClassHub.
  * CRITICAL RULE: Public ranking functions MUST NEVER expose student numbers,
- * real names, or nicknames in the returned public structures.
+ * real names, or nicknames, and public periodic test rankings MUST only
+ * include top scorers within PUBLIC_TOP_LIMIT.
  */
+
+export const PUBLIC_TOP_LIMIT = 5;
 
 export interface ScoreItem {
   studentNumber: number;
@@ -22,6 +25,19 @@ export interface AnonymousGrowthEntry {
   delta: number;
   rateDelta?: number;
   hasDifferentMax?: boolean;
+}
+
+export interface TopScoreSummaryResult {
+  topCount: number;
+  topLimit: number;
+  topAverageScore: number;
+  topAverageRate: number;
+  topMaxScore: number;
+  topMaxTotal: number;
+  topMaxRate: number;
+  topCutoffScore: number;
+  topCutoffTotal: number;
+  topCutoffRate: number;
 }
 
 export interface ScoreDistributionBin {
@@ -49,9 +65,133 @@ function hasMultipleMaxScores(items: ScoreItem[]): boolean {
   return maxSet.size > 1;
 }
 
-function calcRatePercent(score: number, maxScore?: number): number | undefined {
+export function calcRatePercent(score: number, maxScore?: number): number | undefined {
   if (!maxScore || maxScore <= 0) return undefined;
   return Math.round((score / maxScore) * 1000) / 10;
+}
+
+/**
+ * Restricts a public ranking list strictly to TOP-N (rank <= limit, max `limit` items).
+ */
+export function limitTopRankings(
+  rankings: AnonymousRankEntry[],
+  limit = PUBLIC_TOP_LIMIT
+): AnonymousRankEntry[] {
+  if (!rankings || rankings.length === 0) return [];
+  return rankings.filter((r) => r.rank >= 1 && r.rank <= limit).slice(0, limit);
+}
+
+/**
+ * Restricts a public growth ranking list strictly to TOP-N (rank <= limit, max `limit` items).
+ */
+export function limitTopGrowthRankings(
+  rankings: AnonymousGrowthEntry[],
+  limit = PUBLIC_TOP_LIMIT
+): AnonymousGrowthEntry[] {
+  if (!rankings || rankings.length === 0) return [];
+  return rankings.filter((r) => r.rank >= 1 && r.rank <= limit).slice(0, limit);
+}
+
+/**
+ * Ranks already-anonymized top leaderboard entries fetched via server-side LIMIT.
+ * Guarantees strictly <= limit entries and rank <= limit.
+ */
+export function calculateAnonymousRankingsFromEntries(
+  entries: Array<{ score: number; maxScore: number; scoreRate: number }>,
+  limit = PUBLIC_TOP_LIMIT
+): AnonymousRankEntry[] {
+  if (!entries || entries.length === 0) return [];
+  const sorted = [...entries].sort((a, b) => {
+    const rateDiff = b.scoreRate - a.scoreRate;
+    if (Math.abs(rateDiff) > 1e-9) return rateDiff;
+    return b.score - a.score;
+  });
+
+  const result: AnonymousRankEntry[] = [];
+  let currentRank = 1;
+  for (let i = 0; i < sorted.length; i++) {
+    if (i > 0 && sorted[i].scoreRate < sorted[i - 1].scoreRate - 1e-9) {
+      currentRank = i + 1;
+    }
+    if (currentRank > limit || result.length >= limit) break;
+    result.push({
+      rank: currentRank,
+      score: sorted[i].score,
+      maxScore: sorted[i].maxScore,
+      scoreRate: sorted[i].scoreRate,
+    });
+  }
+  return result;
+}
+
+/**
+ * Ranks already-anonymized top growth leaderboard entries fetched via server-side LIMIT.
+ */
+export function calculateAnonymousGrowthFromEntries(
+  entries: Array<{ delta: number; rateDelta: number; hasDifferentMax?: boolean }>,
+  limit = PUBLIC_TOP_LIMIT
+): AnonymousGrowthEntry[] {
+  if (!entries || entries.length === 0) return [];
+  const sorted = [...entries].sort((a, b) => {
+    const rateDiff = b.rateDelta - a.rateDelta;
+    if (Math.abs(rateDiff) > 1e-9) return rateDiff;
+    return b.delta - a.delta;
+  });
+
+  const result: AnonymousGrowthEntry[] = [];
+  let currentRank = 1;
+  for (let i = 0; i < sorted.length; i++) {
+    if (i > 0 && sorted[i].rateDelta < sorted[i - 1].rateDelta - 1e-9) {
+      currentRank = i + 1;
+    }
+    if (currentRank > limit || result.length >= limit) break;
+    result.push({
+      rank: currentRank,
+      delta: sorted[i].delta,
+      rateDelta: sorted[i].rateDelta,
+      hasDifferentMax: sorted[i].hasDifferentMax,
+    });
+  }
+  return result;
+}
+
+/**
+ * Computes summary metrics strictly from the TOP-N public entries.
+ * Never touches or infers lower-ranked students' scores.
+ */
+export function calculateTopScoreSummary(
+  topItems: AnonymousRankEntry[],
+  limit = PUBLIC_TOP_LIMIT
+): TopScoreSummaryResult | null {
+  const limited = limitTopRankings(topItems, limit);
+  if (limited.length === 0) return null;
+
+  const topCount = limited.length;
+  const totalScoreSum = limited.reduce((acc, item) => acc + item.score, 0);
+  const rates = limited.map((item) => {
+    if (item.scoreRate !== undefined) return item.scoreRate;
+    const max = item.maxScore && item.maxScore > 0 ? item.maxScore : 500;
+    return Math.round((item.score / max) * 1000) / 10;
+  });
+  const totalRateSum = rates.reduce((acc, r) => acc + r, 0);
+
+  const first = limited[0];
+  const last = limited[limited.length - 1];
+  const firstMax = first.maxScore && first.maxScore > 0 ? first.maxScore : 500;
+  const lastMax = last.maxScore && last.maxScore > 0 ? last.maxScore : 500;
+
+  return {
+    topCount,
+    topLimit: limit,
+    topAverageScore: Math.round((totalScoreSum / topCount) * 10) / 10,
+    topAverageRate: Math.round((totalRateSum / topCount) * 10) / 10,
+    topMaxScore: first.score,
+    topMaxTotal: firstMax,
+    topMaxRate: rates[0],
+    topCutoffScore: last.score,
+    topCutoffTotal: lastMax,
+    topCutoffRate: rates[rates.length - 1],
+  };
 }
 
 /**

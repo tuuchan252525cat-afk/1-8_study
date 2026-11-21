@@ -112,6 +112,41 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["attendanceNumber", "nickname"]
+    },
+    "TestLeaderboardMeta": {
+      "title": "TestLeaderboardMeta",
+      "description": "Metadata for an anonymous periodic test leaderboard",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "testTitle": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "testTitle"]
+    },
+    "TestLeaderboardEntry": {
+      "title": "TestLeaderboardEntry",
+      "description": "Anonymous score entry in a per-test leaderboard (contains NO student identity)",
+      "type": "object",
+      "properties": {
+        "score": { "type": "number" },
+        "maxScore": { "type": "number" },
+        "scoreRate": { "type": "number" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["score", "maxScore", "scoreRate"]
+    },
+    "GrowthLeaderboardEntry": {
+      "title": "GrowthLeaderboardEntry",
+      "description": "Anonymous growth entry in a per-test growth leaderboard (contains NO student identity)",
+      "type": "object",
+      "properties": {
+        "delta": { "type": "number" },
+        "rateDelta": { "type": "number" },
+        "hasDifferentMax": { "type": "boolean" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["delta", "rateDelta"]
     }
   },
   "firestore": {
@@ -137,7 +172,23 @@
     },
     "/testRecords/{recordId}": {
       "schema": "TestRecord",
-      "description": "Test scores"
+      "description": "Private student test scores (queried only by logged-in studentNumber)"
+    },
+    "/testLeaderboards/{testId}": {
+      "schema": "TestLeaderboardMeta",
+      "description": "Per-test anonymous leaderboard metadata"
+    },
+    "/testLeaderboards/{testId}/entries/{entryId}": {
+      "schema": "TestLeaderboardEntry",
+      "description": "Anonymous score entries queried with server-side orderBy + limit(PUBLIC_TOP_LIMIT)"
+    },
+    "/growthLeaderboards/{testId}": {
+      "schema": "TestLeaderboardMeta",
+      "description": "Per-test anonymous growth leaderboard metadata"
+    },
+    "/growthLeaderboards/{testId}/entries/{entryId}": {
+      "schema": "GrowthLeaderboardEntry",
+      "description": "Anonymous growth entries queried with server-side orderBy + limit(PUBLIC_TOP_LIMIT)"
     },
     "/posts/{postId}": {
       "schema": "ForumPost",

@@ -73,5 +73,48 @@ service cloud.firestore {
       allow read: if true;
       allow create, update, delete: if isValidId(testId);
     }
+
+    // Anonymous per-test leaderboards (TOP-N queried via orderBy + limit)
+    match /testLeaderboards/{testId} {
+      allow read: if true;
+      allow create, update: if isValidId(testId)
+        && request.resource.data.keys().hasAll(['id', 'testTitle'])
+        && request.resource.data.testTitle is string
+        && request.resource.data.testTitle.size() <= 128;
+      allow delete: if isValidId(testId);
+
+      match /entries/{entryId} {
+        allow read: if true;
+        allow create, update: if isValidId(testId) && isValidId(entryId)
+          && !request.resource.data.keys().hasAny(['studentNumber', 'attendanceNumber', 'nickname', 'name'])
+          && request.resource.data.keys().hasAll(['score', 'maxScore', 'scoreRate'])
+          && request.resource.data.score is number
+          && request.resource.data.score >= 0
+          && request.resource.data.maxScore is number
+          && request.resource.data.maxScore >= 1
+          && request.resource.data.scoreRate is number;
+        allow delete: if isValidId(testId) && isValidId(entryId);
+      }
+    }
+
+    // Anonymous per-test growth leaderboards (TOP-N queried via orderBy + limit)
+    match /growthLeaderboards/{testId} {
+      allow read: if true;
+      allow create, update: if isValidId(testId)
+        && request.resource.data.keys().hasAll(['id', 'testTitle'])
+        && request.resource.data.testTitle is string
+        && request.resource.data.testTitle.size() <= 128;
+      allow delete: if isValidId(testId);
+
+      match /entries/{entryId} {
+        allow read: if true;
+        allow create, update: if isValidId(testId) && isValidId(entryId)
+          && !request.resource.data.keys().hasAny(['studentNumber', 'attendanceNumber', 'nickname', 'name'])
+          && request.resource.data.keys().hasAll(['delta', 'rateDelta'])
+          && request.resource.data.delta is number
+          && request.resource.data.rateDelta is number;
+        allow delete: if isValidId(testId) && isValidId(entryId);
+      }
+    }
   }
 }

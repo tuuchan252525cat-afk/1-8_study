@@ -81,6 +81,19 @@ export interface DistributionBin {
 
 export type ScoreDistributionBin = DistributionBin;
 
+export interface TopScoreSummary {
+  topCount: number;
+  topLimit: number;
+  topAverageScore: number;
+  topAverageRate: number;
+  topMaxScore: number;
+  topMaxTotal: number;
+  topMaxRate: number;
+  topCutoffScore: number;
+  topCutoffTotal: number;
+  topCutoffRate: number;
+}
+
 export interface PersonalStanding {
   studentNumber: number;
   totalScore: number;
@@ -88,9 +101,9 @@ export interface PersonalStanding {
   scoreRate?: number;
   rank: number;
   totalParticipants: number;
-  classAverage: number;
+  classAverage?: number;
   classAverageRate?: number;
-  classMax: number;
+  classMax?: number;
   classMaxTotal?: number;
   growthDelta?: number;
   growthRateDelta?: number;

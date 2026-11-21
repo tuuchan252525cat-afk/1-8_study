@@ -243,8 +243,8 @@ export const MyPageView: React.FC = () => {
               </span>
             </div>
             <p className="text-[11px] text-[#1c603a] font-black mt-1 tabular-nums">
-              {personalStanding.rank > 0 && personalStanding.scoreRate !== undefined
-                ? `◎ 得点率 ${personalStanding.scoreRate}% (平均 ${personalStanding.classAverage}点)`
+              {personalStanding.totalMaxScore !== undefined && personalStanding.scoreRate !== undefined
+                ? `◎ 得点率 ${personalStanding.scoreRate}% (全${Math.max(personalStanding.totalParticipants, 1)}件中)`
                 : '◎ 点数を記録すると集計されます'}
             </p>
           </div>

@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { PersonalStandingCard } from './PersonalStandingCard';
 import { ScoreInputModal } from './ScoreInputModal';
-import { BarChart3, TrendingUp, ListOrdered, Plus, Award } from 'lucide-react';
+import { PUBLIC_TOP_LIMIT } from '../utils/privacyRankings';
+import { Plus, Award, Trophy, ShieldCheck } from 'lucide-react';
 
 export const ScoreManagementView: React.FC = () => {
   const {
@@ -11,19 +12,30 @@ export const ScoreManagementView: React.FC = () => {
     setActiveTestTitle,
     anonymousRankings,
     anonymousGrowthRankings,
-    scoreDistribution,
+    topScoreSummary,
     personalStanding,
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'ranks' | 'distribution' | 'growth'>('ranks');
+  const [activeTab, setActiveTab] = useState<'ranks' | 'comparison' | 'growth'>('ranks');
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // Defensive UI-level guard: never render rank > PUBLIC_TOP_LIMIT in DOM
+  const visibleTopRankings = anonymousRankings
+    .filter((item) => item.rank >= 1 && item.rank <= PUBLIC_TOP_LIMIT)
+    .slice(0, PUBLIC_TOP_LIMIT);
+
+  const visibleTopGrowthRankings = anonymousGrowthRankings
+    .filter((item) => item.rank >= 1 && item.rank <= PUBLIC_TOP_LIMIT)
+    .slice(0, PUBLIC_TOP_LIMIT);
+
+  const totalRecordCount = Math.max(personalStanding.totalParticipants, visibleTopRankings.length);
 
   return (
     <div className="space-y-6">
-      {/* 1. Private Personal Standing Card */}
+      {/* 1. Private Personal Standing Card (Visible ONLY to Logged-in User) */}
       <PersonalStandingCard onOpenScoreInput={() => setIsModalOpen(true)} />
 
-      {/* 2. Main Rankings & Analytics Section */}
+      {/* 2. Main TOP-N Public Rankings & Summary Section */}
       <div className="bg-white rounded-3xl p-5 sm:p-7 border border-stone-200/90 shadow-xs space-y-6">
         {/* Test Selector and Action */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-stone-100">
@@ -31,7 +43,7 @@ export const ScoreManagementView: React.FC = () => {
             <span className="block text-[11px] font-black text-stone-400 uppercase tracking-wider mb-1">
               TARGET TEST
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <select
                 value={activeTestTitle}
                 onChange={(e) => setActiveTestTitle(e.target.value)}
@@ -43,8 +55,8 @@ export const ScoreManagementView: React.FC = () => {
                   </option>
                 ))}
               </select>
-              <span className="text-xs text-stone-500 font-bold bg-stone-100 px-2.5 py-1 rounded-xl">
-                {anonymousRankings.length}件の記録
+              <span className="text-xs text-stone-500 font-bold bg-stone-100 px-2.5 py-1 rounded-xl tabular-nums">
+                {totalRecordCount}件の記録
               </span>
             </div>
           </div>
@@ -58,7 +70,7 @@ export const ScoreManagementView: React.FC = () => {
           </button>
         </div>
 
-        {/* DAY 1 / DAY 2 Inspired Segmented Tabs (Modeled on 39204_0_b6de3a0e.jpg) */}
+        {/* Segmented Tabs */}
         <div className="grid grid-cols-3 gap-2 sm:gap-3">
           <button
             onClick={() => setActiveTab('ranks')}
@@ -77,9 +89,9 @@ export const ScoreManagementView: React.FC = () => {
           </button>
 
           <button
-            onClick={() => setActiveTab('distribution')}
+            onClick={() => setActiveTab('comparison')}
             className={`py-3 px-2 sm:px-4 rounded-2xl border-2 transition-all cursor-pointer text-center ${
-              activeTab === 'distribution'
+              activeTab === 'comparison'
                 ? 'border-[#1c603a] bg-[#1c603a] text-white shadow-xs'
                 : 'border-stone-200 bg-white hover:bg-stone-50 text-slate-700'
             }`}
@@ -88,7 +100,7 @@ export const ScoreManagementView: React.FC = () => {
               TAB 2
             </span>
             <span className="block text-xs sm:text-sm font-black mt-0.5 truncate">
-              得点分布グラフ
+              上位スコア比較
             </span>
           </button>
 
@@ -109,17 +121,19 @@ export const ScoreManagementView: React.FC = () => {
           </button>
         </div>
 
-        {/* Tab 1: Anonymous Rankings List (Modeled on 39204_0_b6de3a0e.jpg Cards) */}
+        {/* Tab 1: Anonymous TOP-N Rankings List */}
         {activeTab === 'ranks' && (
           <div>
-            <div className="flex items-center justify-between text-xs text-stone-500 mb-3 px-1 font-bold">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-stone-500 mb-3 px-1 font-bold">
               <span className="text-slate-800 flex items-center gap-1">
                 <span>◎ 匿名順位一覧（氏名・出席番号は完全非公開）</span>
               </span>
-              <span className="text-stone-400">1〜{anonymousRankings.length}位</span>
+              <span className="text-[#1c603a] bg-[#f4f8f5] border border-[#1c603a]/20 px-2.5 py-0.5 rounded-lg font-black">
+                上位{PUBLIC_TOP_LIMIT}名限定公開（TOP {PUBLIC_TOP_LIMIT}）
+              </span>
             </div>
 
-            {anonymousRankings.length === 0 ? (
+            {visibleTopRankings.length === 0 ? (
               <div className="p-8 text-center bg-[#fdfbf7] rounded-3xl border border-stone-200 space-y-3">
                 <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
                   <Award className="w-6 h-6" />
@@ -129,7 +143,7 @@ export const ScoreManagementView: React.FC = () => {
                     「{activeTestTitle}」の記録がまだありません
                   </p>
                   <p className="text-xs text-stone-500 mt-1">
-                    「点数を記録・追加」ボタンからテスト結果を保存すると、全体の順位表が生成されます。
+                    「点数を記録・追加」ボタンからテスト結果を保存すると、成績上位者のランキングが公開されます。
                   </p>
                 </div>
                 <button
@@ -144,7 +158,7 @@ export const ScoreManagementView: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {(() => {
                   let userRankShown = false;
-                  return anonymousRankings.map((item, index) => {
+                  return visibleTopRankings.map((item, index) => {
                     const itemMax = item.maxScore && item.maxScore > 0 ? item.maxScore : 500;
                     const itemRate =
                       item.scoreRate !== undefined
@@ -153,6 +167,7 @@ export const ScoreManagementView: React.FC = () => {
 
                     const isMatch =
                       personalStanding.rank > 0 &&
+                      personalStanding.rank <= PUBLIC_TOP_LIMIT &&
                       personalStanding.rank === item.rank &&
                       personalStanding.totalScore === item.score &&
                       (!personalStanding.totalMaxScore ||
@@ -172,7 +187,6 @@ export const ScoreManagementView: React.FC = () => {
                             : 'bg-white hover:bg-[#fdfbf7] border-stone-200/90 shadow-2xs'
                         }`}
                       >
-                        {/* Left Icon Badge (Marugotosai circle badge) */}
                         <div
                           className={`w-11 h-11 rounded-2xl flex flex-col items-center justify-center font-black text-xs shrink-0 shadow-2xs ${
                             item.rank === 1
@@ -188,7 +202,6 @@ export const ScoreManagementView: React.FC = () => {
                           <span className="text-sm font-black leading-none mt-0.5">{item.rank}</span>
                         </div>
 
-                        {/* Middle Info */}
                         <div className="flex-1 min-w-0">
                           <div className="text-[11px] font-black text-stone-400 uppercase tracking-tight">
                             TOTAL SCORE
@@ -201,7 +214,7 @@ export const ScoreManagementView: React.FC = () => {
                               </span>
                             </span>
                             {isMyScore && (
-                              <span className="text-[10px] font-black text-white bg-[#1c603a] px-2 py-0.5 rounded-full">
+                              <span className="text-[10px] font-black text-white bg-[#1c603a] px-2 py-0.5 rounded-md">
                                 あなた
                               </span>
                             )}
@@ -213,7 +226,6 @@ export const ScoreManagementView: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* Score Bar visualization */}
                         <div className="w-20 sm:w-28 flex flex-col items-end gap-1 shrink-0">
                           <div className="w-full bg-stone-100 h-2.5 rounded-full overflow-hidden p-0.5 border border-stone-200">
                             <div
@@ -237,73 +249,182 @@ export const ScoreManagementView: React.FC = () => {
           </div>
         )}
 
-        {/* Tab 2: Score Distribution (Histogram) */}
-        {activeTab === 'distribution' && (
+        {/* Tab 2: Top Scorers Comparison & Average Summary (No lower-tier distribution) */}
+        {activeTab === 'comparison' && (
           <div className="space-y-4">
-            <div className="text-xs text-stone-600 font-bold bg-[#fdfbf7] p-3 rounded-2xl border border-stone-200/80">
-              ◎ 全体の点数帯ごとの人数分布です。自分がどのゾーンに位置しているか客観的に把握できます。
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-stone-600 font-bold bg-[#fdfbf7] p-3.5 rounded-2xl border border-stone-200/80">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-[#1c603a] shrink-0" />
+                <span>
+                  ◎ プライバシー保護のため、上位者（TOP {PUBLIC_TOP_LIMIT}）のみのスコア比較と平均点サマリーを表示しています。
+                </span>
+              </div>
+              <span className="text-[#1c603a] bg-[#f4f8f5] border border-[#1c603a]/20 px-2 py-0.5 rounded-lg font-black text-[11px]">
+                上位{PUBLIC_TOP_LIMIT}名限定公開（TOP {PUBLIC_TOP_LIMIT}）
+              </span>
             </div>
 
-            <div className="space-y-3 pt-2">
-              {scoreDistribution.map((bin) => {
-                const maxCount = Math.max(...scoreDistribution.map((b) => b.count), 1);
-                const percent = (bin.count / maxCount) * 100;
-                const isMyBin =
-                  personalStanding.rank > 0 &&
-                  personalStanding.totalScore >= bin.min &&
-                  personalStanding.totalScore <= bin.max;
-
-                return (
-                  <div
-                    key={bin.range}
-                    className={`p-3.5 rounded-2xl border transition-all ${
-                      isMyBin
-                        ? 'bg-[#f4f8f5] border-[#1c603a] ring-2 ring-[#1c603a]/20'
-                        : 'bg-[#fdfbf7] border-stone-200/80'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between text-xs mb-1.5">
-                      <span
-                        className={`font-black ${
-                          isMyBin ? 'text-[#1c603a]' : 'text-slate-800'
-                        }`}
-                      >
-                        {bin.range} {isMyBin && ' (◎ あなたの得点帯)'}
-                      </span>
-                      <span className="font-mono text-slate-800 font-black text-sm">{bin.count}人</span>
+            {!topScoreSummary || visibleTopRankings.length === 0 ? (
+              <div className="p-8 text-center bg-[#fdfbf7] rounded-3xl border border-stone-200 space-y-2">
+                <div className="w-11 h-11 rounded-full bg-emerald-50 text-[#1c603a] flex items-center justify-center mx-auto">
+                  <Trophy className="w-5 h-5" />
+                </div>
+                <p className="text-sm font-black text-slate-800">
+                  「{activeTestTitle}」の上位スコアデータがまだありません
+                </p>
+                <p className="text-xs text-stone-500">
+                  点数を記録すると、成績上位者（TOP {PUBLIC_TOP_LIMIT}）の平均点サマリーと比較グラフが表示されます。
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* Top-N Summary Metric Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="bg-[#fdfbf7] rounded-2xl p-4 border border-stone-200/90 shadow-2xs">
+                    <span className="text-[11px] font-black text-stone-500 block">
+                      TOP {topScoreSummary.topCount} 平均点
+                    </span>
+                    <div className="text-2xl font-black text-[#1c603a] mt-1 tabular-nums">
+                      {topScoreSummary.topAverageScore}
+                      <span className="text-xs font-bold text-stone-500 ml-1">点</span>
                     </div>
-                    <div className="w-full bg-stone-200/80 h-3.5 rounded-full overflow-hidden p-0.5">
-                      <div
-                        className={`h-full rounded-full transition-all duration-500 ${
-                          isMyBin ? 'bg-[#1c603a]' : 'bg-slate-700'
-                        }`}
-                        style={{ width: `${Math.max(percent, 3)}%` }}
-                      />
-                    </div>
+                    <span className="text-[11px] font-bold text-stone-500 mt-0.5 block tabular-nums">
+                      平均得点率 {topScoreSummary.topAverageRate}%
+                    </span>
                   </div>
-                );
-              })}
-            </div>
+
+                  <div className="bg-[#fdfbf7] rounded-2xl p-4 border border-stone-200/90 shadow-2xs">
+                    <span className="text-[11px] font-black text-stone-500 block">
+                      トップ 1位スコア
+                    </span>
+                    <div className="text-2xl font-black text-slate-900 mt-1 tabular-nums">
+                      {topScoreSummary.topMaxScore}
+                      <span className="text-xs font-bold text-stone-500 ml-1">
+                        / {topScoreSummary.topMaxTotal}点
+                      </span>
+                    </div>
+                    <span className="text-[11px] font-bold text-amber-700 mt-0.5 block tabular-nums">
+                      最高得点率 {topScoreSummary.topMaxRate}%
+                    </span>
+                  </div>
+
+                  <div className="bg-[#fdfbf7] rounded-2xl p-4 border border-stone-200/90 shadow-2xs">
+                    <span className="text-[11px] font-black text-stone-500 block">
+                      TOP {topScoreSummary.topCount} ボーダーライン
+                    </span>
+                    <div className="text-2xl font-black text-slate-900 mt-1 tabular-nums">
+                      {topScoreSummary.topCutoffScore}
+                      <span className="text-xs font-bold text-stone-500 ml-1">
+                        / {topScoreSummary.topCutoffTotal}点
+                      </span>
+                    </div>
+                    <span className="text-[11px] font-bold text-stone-500 mt-0.5 block tabular-nums">
+                      入賞ライン {topScoreSummary.topCutoffRate}%
+                    </span>
+                  </div>
+                </div>
+
+                {/* Anonymous Comparison Bars for TOP-N ONLY */}
+                <div className="space-y-2.5 pt-1">
+                  {(() => {
+                    let userBarShown = false;
+                    return visibleTopRankings.map((item, idx) => {
+                      const itemMax = item.maxScore && item.maxScore > 0 ? item.maxScore : 500;
+                      const itemRate =
+                        item.scoreRate !== undefined
+                          ? item.scoreRate
+                          : Math.round((item.score / itemMax) * 1000) / 10;
+
+                      const isMatch =
+                        personalStanding.rank > 0 &&
+                        personalStanding.rank <= PUBLIC_TOP_LIMIT &&
+                        personalStanding.rank === item.rank &&
+                        personalStanding.totalScore === item.score;
+                      const isMyBar = isMatch && !userBarShown;
+                      if (isMyBar) userBarShown = true;
+
+                      return (
+                        <div
+                          key={`cmp-${idx}-${item.rank}-${item.score}`}
+                          className={`p-3.5 rounded-2xl border transition-all ${
+                            isMyBar
+                              ? 'bg-[#f4f8f5] border-[#1c603a] ring-2 ring-[#1c603a]/20'
+                              : 'bg-[#fdfbf7] border-stone-200/80'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between text-xs mb-1.5 gap-2">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`font-black px-2 py-0.5 rounded-md text-[11px] ${
+                                  item.rank === 1
+                                    ? 'bg-amber-400 text-amber-950'
+                                    : item.rank <= 3
+                                    ? 'bg-stone-200 text-slate-800'
+                                    : 'bg-stone-100 text-slate-700'
+                                }`}
+                              >
+                                {item.rank}位
+                              </span>
+                              <span className="font-black text-slate-800">
+                                匿名上位メンバー
+                              </span>
+                              {isMyBar && (
+                                <span className="text-[10px] font-black text-white bg-[#1c603a] px-2 py-0.5 rounded-md">
+                                  あなた
+                                </span>
+                              )}
+                            </div>
+                            <span className="font-mono text-slate-900 font-black text-xs sm:text-sm tabular-nums">
+                              {item.score} / {itemMax}点 ({itemRate}%)
+                            </span>
+                          </div>
+                          <div className="w-full bg-stone-200/80 h-3 rounded-full overflow-hidden p-0.5">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${
+                                isMyBar
+                                  ? 'bg-[#1c603a]'
+                                  : item.rank === 1
+                                  ? 'bg-amber-400'
+                                  : 'bg-slate-700'
+                              }`}
+                              style={{ width: `${Math.min(100, Math.max(4, itemRate))}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </>
+            )}
           </div>
         )}
 
-        {/* Tab 3: Growth Rankings */}
+        {/* Tab 3: TOP-N Growth Rankings */}
         {activeTab === 'growth' && (
           <div>
-            <div className="text-xs text-stone-600 font-bold bg-[#fdfbf7] p-3 rounded-2xl border border-stone-200/80 mb-3">
-              ◎ 前回テストと比較した全体の得点アップ（伸び率）ランキングです。
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-stone-600 font-bold mb-3 px-1">
+              <span className="text-slate-800">
+                ◎ 前回テスト比較 · 伸び率ランキング（氏名・出席番号は完全非公開）
+              </span>
+              <span className="text-[#1c603a] bg-[#f4f8f5] border border-[#1c603a]/20 px-2.5 py-0.5 rounded-lg font-black">
+                上位{PUBLIC_TOP_LIMIT}名限定公開（TOP {PUBLIC_TOP_LIMIT}）
+              </span>
             </div>
 
-            {anonymousGrowthRankings.length === 0 ? (
+            {visibleTopGrowthRankings.length === 0 ? (
               <div className="p-8 text-center bg-[#fdfbf7] rounded-3xl border border-stone-200 space-y-2">
                 <p className="text-sm font-black text-slate-800">成長度データは集計中です</p>
-                <p className="text-xs text-stone-500">2回以上のテスト結果が記録されると自動で伸び率が計算されます。</p>
+                <p className="text-xs text-stone-500">
+                  点数を記録すると、成績上位者（前回比の伸び率TOP {PUBLIC_TOP_LIMIT}）のランキングが公開されます。
+                </p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {anonymousGrowthRankings.map((item, index) => {
+                {visibleTopGrowthRankings.map((item, index) => {
                   const isMyGrowth =
-                    personalStanding.growthRank !== null &&
+                    personalStanding.growthRank !== undefined &&
+                    personalStanding.growthRank <= PUBLIC_TOP_LIMIT &&
                     personalStanding.growthRank === item.rank &&
                     personalStanding.growthDelta === item.delta;
 
@@ -352,7 +473,7 @@ export const ScoreManagementView: React.FC = () => {
                               </span>
                             )}
                             {isMyGrowth && (
-                              <span className="text-[10px] font-black text-white bg-[#1c603a] px-2 py-0.5 rounded-full ml-1">
+                              <span className="text-[10px] font-black text-white bg-[#1c603a] px-2 py-0.5 rounded-md ml-1">
                                 あなた
                               </span>
                             )}

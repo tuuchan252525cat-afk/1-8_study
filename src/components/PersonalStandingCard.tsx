@@ -1,5 +1,6 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
+import { PUBLIC_TOP_LIMIT } from '../utils/privacyRankings';
 import { TrendingUp, Award, Edit3, Lock, BookOpen } from 'lucide-react';
 
 interface Props {
@@ -11,7 +12,10 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
 
   if (!currentStudent) return null;
 
-  const hasScore = personalStanding.rank > 0 || personalStanding.totalScore > 0;
+  const hasScore =
+    personalStanding.totalMaxScore !== undefined ||
+    personalStanding.rank > 0 ||
+    personalStanding.totalScore > 0;
   const growthDelta = personalStanding.growthDelta ?? 0;
   const isPositiveGrowth = growthDelta > 0;
   const totalMaxScore = personalStanding.totalMaxScore || 500;
@@ -20,10 +24,13 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
       ? personalStanding.scoreRate
       : Math.round((personalStanding.totalScore / totalMaxScore) * 1000) / 10;
 
+  const rankDisplay = personalStanding.rank > 0 ? `${personalStanding.rank}位` : '集計中';
+  const totalCount = Math.max(personalStanding.totalParticipants, hasScore ? 1 : 0);
+
   return (
     <div className="bg-white rounded-3xl p-5 sm:p-7 border border-stone-200/90 shadow-xs relative overflow-hidden">
       {/* Header Info */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-5 pb-4 border-b border-stone-100">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-4 border-b border-stone-100">
         <div className="flex items-center gap-3">
           <span
             className={`w-11 h-11 rounded-2xl flex items-center justify-center text-white font-black shadow-xs shrink-0 ${
@@ -34,7 +41,7 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
             {currentStudent.role === 'teacher' ? '先生' : currentStudent.attendanceNumber}
           </span>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="font-black text-slate-900 text-lg">
                 {currentStudent.nickname}
               </span>
@@ -42,6 +49,10 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
                 {currentStudent.role === 'teacher'
                   ? '先生用アカウント'
                   : `出席番号 ${currentStudent.attendanceNumber}番`}
+              </span>
+              <span className="inline-flex items-center gap-1 text-[10px] font-black text-[#1c603a] bg-[#f4f8f5] border border-[#1c603a]/20 px-2 py-0.5 rounded-md">
+                <Lock className="w-3 h-3" />
+                <span>非公開 · ログイン中の本人のみ表示</span>
               </span>
             </div>
             <div className="text-[11px] text-[#1c603a] font-extrabold tracking-wide mt-0.5 flex items-center gap-1">
@@ -61,6 +72,24 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
         </button>
       </div>
 
+      {/* Explicit Personal Standing Banner (Visible ONLY to Logged-in User) */}
+      {hasScore && (
+        <div className="mb-4 px-4 py-3 rounded-2xl bg-[#f4f8f5] border border-[#1c603a]/25 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-xs sm:text-sm font-black text-slate-900 tabular-nums">
+            <Lock className="w-4 h-4 text-[#1c603a] shrink-0" />
+            <span>
+              あなたの記録：<span className="text-[#1c603a] text-base">{personalStanding.totalScore}点</span>
+              （現在 <span className="text-[#1c603a]">{rankDisplay}</span> / 記録数 {totalCount}件中）
+            </span>
+          </div>
+          {personalStanding.rank > PUBLIC_TOP_LIMIT && (
+            <span className="text-[11px] font-bold text-stone-600">
+              ※ 全体公開ランキングは上位{PUBLIC_TOP_LIMIT}名のみ表示（あなたの順位は本人のみ確認可能）
+            </span>
+          )}
+        </div>
+      )}
+
       {hasScore ? (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
           {/* Card 1: 総合順位 */}
@@ -73,18 +102,22 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
                 <span className="font-black text-slate-800 text-xs">総合順位</span>
               </div>
               <span className="text-[11px] font-bold text-stone-400">
-                {personalStanding.totalParticipants}人中
+                {totalCount}件中
               </span>
             </div>
             <div>
               <div className="flex items-baseline gap-1.5 mt-1">
                 <span className="text-3xl font-black text-slate-900 tabular-nums">
-                  {personalStanding.rank}
+                  {personalStanding.rank > 0 ? personalStanding.rank : '-'}
                 </span>
                 <span className="text-xs font-black text-slate-600">位</span>
               </div>
               <p className="text-[11px] text-[#1c603a] font-extrabold mt-1.5 flex items-center gap-1">
-                <span>◎ 上位 {Math.round((personalStanding.rank / personalStanding.totalParticipants) * 100)}% 以内</span>
+                {personalStanding.rank > 0 && totalCount > 0 ? (
+                  <span>◎ 上位 {Math.round((personalStanding.rank / totalCount) * 100)}% 以内</span>
+                ) : (
+                  <span>◎ 順位を集計しています</span>
+                )}
               </p>
             </div>
           </div>
@@ -160,10 +193,14 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
                   / {totalMaxScore}点満点
                 </span>
               </div>
-              <div className="text-[11px] text-stone-500 font-bold mt-1.5 flex items-center gap-1.5">
-                <span>平均: {personalStanding.classAverage}点</span>
-                <span aria-hidden="true">·</span>
-                <span>最高: {personalStanding.classMax}点</span>
+              <div className="text-[11px] text-stone-500 font-bold mt-1.5 flex items-center gap-1.5 tabular-nums">
+                {personalStanding.classAverage !== undefined && (
+                  <>
+                    <span>TOP {PUBLIC_TOP_LIMIT}平均: {personalStanding.classAverage}点</span>
+                    <span aria-hidden="true">·</span>
+                  </>
+                )}
+                <span>最高: {personalStanding.classMax ?? personalStanding.totalScore}点</span>
               </div>
             </div>
           </div>
@@ -177,7 +214,7 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
             {activeTestTitle} の点数がまだ登録されていません
           </p>
           <p className="text-xs text-stone-500 font-medium mt-1">
-            点数を記録すると、順位と成長度が表示されます。
+            点数を記録すると、あなた専用の順位（記録数 {personalStanding.totalParticipants}件中）と成長度が表示されます。
           </p>
           <button
             onClick={onOpenScoreInput}

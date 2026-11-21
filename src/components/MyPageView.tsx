@@ -200,7 +200,9 @@ export const MyPageView: React.FC = () => {
       <div className="bg-white rounded-3xl p-5 sm:p-7 border border-stone-200/90 shadow-xs space-y-6">
         <div className="pb-4 border-b border-stone-100 flex items-center justify-between">
           <h3 className="text-base font-black text-slate-900">
-            {activeTestTitle} 個人成績と成長度サマリー
+            {activeTestTitle
+              ? `${activeTestTitle} 個人成績と成長度サマリー`
+              : '定期テスト個人成績と成長度サマリー'}
           </h3>
           <span className="text-[11px] font-black text-[#1c603a]">
             ◎ 非公開データ

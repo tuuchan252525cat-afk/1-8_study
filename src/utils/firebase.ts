@@ -73,6 +73,7 @@ export const COLLECTIONS = {
   TEST_RECORDS: 'testRecords',
   TEST_LEADERBOARDS: 'testLeaderboards',
   GROWTH_LEADERBOARDS: 'growthLeaderboards',
+  DELETED_TESTS: 'deletedTests',
   POSTS: 'posts',
   CUSTOM_SUBJECTS: 'customSubjects',
   QUIZ_SUBMISSIONS: 'quizSubmissions',
@@ -1367,3 +1368,146 @@ export async function fetchMyServerRankStanding(
     return { totalParticipants: 0, myRank: null, growthRank: null };
   }
 }
+
+async function deleteDocRefsInBatches(refs: any[]): Promise<void> {
+  for (let i = 0; i < refs.length; i += 100) {
+    const batch = writeBatch(db);
+    refs.slice(i, i + 100).forEach((ref) => batch.delete(ref));
+    await batch.commit();
+  }
+}
+
+/**
+ * Fetches all deleted periodic test titles (tombstones) from Firestore.
+ */
+export async function fetchDeletedTestTitlesFromCloud(): Promise<string[]> {
+  try {
+    const snap = await getDocs(collection(db, COLLECTIONS.DELETED_TESTS));
+    const titles: string[] = [];
+    snap.forEach((d) => {
+      const data = d.data();
+      if (data && typeof data.title === 'string' && data.title.trim()) {
+        titles.push(data.title.trim());
+      }
+    });
+    return titles;
+  } catch (err: any) {
+    console.warn('[Firebase] Error fetching deleted test titles:', err?.message || err);
+    return [];
+  }
+}
+
+/**
+ * Subscribes to real-time deleted periodic test tombstones so stale clients immediately purge them.
+ */
+export function subscribeToDeletedTestTitles(
+  onUpdate: (titles: string[]) => void
+): () => void {
+  try {
+    const colRef = collection(db, COLLECTIONS.DELETED_TESTS);
+    return onSnapshot(
+      colRef,
+      (snapshot) => {
+        const titles: string[] = [];
+        snapshot.forEach((d) => {
+          const data = d.data();
+          if (data && typeof data.title === 'string' && data.title.trim()) {
+            titles.push(data.title.trim());
+          }
+        });
+        onUpdate(titles);
+      },
+      (error) => {
+        console.warn('Firestore deletedTests subscription warning:', error);
+      }
+    );
+  } catch (e) {
+    console.warn('Failed to attach deletedTests listener:', e);
+    return () => {};
+  }
+}
+
+/**
+ * Removes a deleted-test tombstone when a periodic test with that name is newly registered.
+ */
+export async function clearDeletedTestTombstone(testTitle: string): Promise<void> {
+  const trimmed = (testTitle || '').trim();
+  if (!trimmed) return;
+  try {
+    const safeId = toTestLeaderboardId(trimmed);
+    await deleteDoc(doc(db, COLLECTIONS.DELETED_TESTS, safeId));
+  } catch (err: any) {
+    console.warn('[Firebase] Failed to clear deleted test tombstone:', err?.message || err);
+  }
+}
+
+/**
+ * Cascade-deletes a periodic test and ALL associated data from Firestore:
+ * 1. Writes a tombstone to `deletedTests/{safeId}`
+ * 2. Deletes `periodicTests` schedule docs (by ID and by matching title)
+ * 3. Deletes ALL `testRecords` matching `testTitle` across all students
+ * 4. Deletes ALL entries + parent doc in `testLeaderboards/{safeId}`
+ * 5. Deletes ALL entries + parent doc in `growthLeaderboards/{safeId}`
+ */
+export async function cascadeDeleteTestFromCloud(
+  testTitle: string,
+  testId?: string
+): Promise<void> {
+  const trimmedTitle = (testTitle || '').trim();
+  const safeId = trimmedTitle ? toTestLeaderboardId(trimmedTitle) : '';
+
+  try {
+    if (trimmedTitle && safeId) {
+      await setDoc(
+        doc(db, COLLECTIONS.DELETED_TESTS, safeId),
+        sanitizeForFirestore({
+          id: safeId,
+          title: trimmedTitle.slice(0, 128),
+          deletedAt: new Date().toISOString(),
+        }),
+        { merge: true }
+      );
+    }
+
+    const refsToDelete: any[] = [];
+
+    if (testId) {
+      refsToDelete.push(doc(db, COLLECTIONS.PERIODIC_TESTS, toSafeFirestoreId(testId)));
+    }
+
+    if (trimmedTitle) {
+      const periodicSnap = await getDocs(
+        query(collection(db, COLLECTIONS.PERIODIC_TESTS), where('title', '==', trimmedTitle))
+      );
+      periodicSnap.forEach((d) => refsToDelete.push(d.ref));
+
+      const recordsSnap = await getDocs(
+        query(collection(db, COLLECTIONS.TEST_RECORDS), where('testTitle', '==', trimmedTitle))
+      );
+      recordsSnap.forEach((d) => refsToDelete.push(d.ref));
+
+      if (safeId) {
+        const lbEntriesSnap = await getDocs(
+          collection(db, COLLECTIONS.TEST_LEADERBOARDS, safeId, 'entries')
+        );
+        lbEntriesSnap.forEach((d) => refsToDelete.push(d.ref));
+        refsToDelete.push(doc(db, COLLECTIONS.TEST_LEADERBOARDS, safeId));
+
+        const growthEntriesSnap = await getDocs(
+          collection(db, COLLECTIONS.GROWTH_LEADERBOARDS, safeId, 'entries')
+        );
+        growthEntriesSnap.forEach((d) => refsToDelete.push(d.ref));
+        refsToDelete.push(doc(db, COLLECTIONS.GROWTH_LEADERBOARDS, safeId));
+      }
+    }
+
+    if (refsToDelete.length > 0) {
+      await deleteDocRefsInBatches(refsToDelete);
+    }
+    console.info(`[Firebase] Cascade deleted test "${trimmedTitle || testId}" (${refsToDelete.length} docs)`);
+  } catch (err: any) {
+    console.error('[Firebase] Cascade delete test error:', err?.message || err);
+    throw new Error(`テストおよび関連成績データの削除エラー: ${err?.message || err}`);
+  }
+}
+

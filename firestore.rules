@@ -116,5 +116,15 @@ service cloud.firestore {
         allow delete: if isValidId(testId) && isValidId(entryId);
       }
     }
+
+    // Tombstones for deleted periodic tests
+    match /deletedTests/{testId} {
+      allow read: if true;
+      allow create, update: if isValidId(testId)
+        && request.resource.data.keys().hasAll(['id', 'title'])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 128;
+      allow delete: if isValidId(testId);
+    }
   }
 }

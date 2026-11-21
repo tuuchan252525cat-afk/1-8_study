@@ -211,7 +211,9 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
             <Lock className="w-5 h-5" />
           </div>
           <p className="text-sm font-black text-slate-800">
-            {activeTestTitle} の点数がまだ登録されていません
+            {activeTestTitle
+              ? `${activeTestTitle} の点数がまだ登録されていません`
+              : '定期テストがまだ登録されていません'}
           </p>
           <p className="text-xs text-stone-500 font-medium mt-1">
             点数を記録すると、あなた専用の順位（記録数 {personalStanding.totalParticipants}件中）と成長度が表示されます。

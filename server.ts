@@ -226,6 +226,8 @@ interface ServerData {
   materials: any[];
   quizzes: any[];
   testRecords: any[];
+  periodicTests: any[];
+  deletedTestTitles: string[];
   posts: any[];
   customSubjects: any[];
   quizSubmissions: any[];
@@ -250,10 +252,20 @@ function loadServerStorage(): ServerData {
     if (fs.existsSync(DATA_FILE)) {
       const content = fs.readFileSync(DATA_FILE, 'utf-8');
       const parsed = JSON.parse(content);
+      const deletedTestTitles: string[] = Array.isArray(parsed.deletedTestTitles)
+        ? parsed.deletedTestTitles.filter((t: any) => typeof t === 'string' && t.trim())
+        : [];
+      const deletedSet = new Set(deletedTestTitles);
       return {
         materials: Array.isArray(parsed.materials) ? parsed.materials : [],
         quizzes: Array.isArray(parsed.quizzes) ? parsed.quizzes : [],
-        testRecords: Array.isArray(parsed.testRecords) ? parsed.testRecords : [],
+        testRecords: (Array.isArray(parsed.testRecords) ? parsed.testRecords : []).filter(
+          (r: any) => r && !deletedSet.has(r.testTitle)
+        ),
+        periodicTests: (Array.isArray(parsed.periodicTests) ? parsed.periodicTests : []).filter(
+          (p: any) => p && !deletedSet.has(p.title)
+        ),
+        deletedTestTitles,
         posts: (Array.isArray(parsed.posts) ? parsed.posts : []).filter((p: any) => p && !isOctoberPost(p)),
         customSubjects: Array.isArray(parsed.customSubjects) ? parsed.customSubjects : [],
         quizSubmissions: Array.isArray(parsed.quizSubmissions) ? parsed.quizSubmissions : [],
@@ -267,6 +279,8 @@ function loadServerStorage(): ServerData {
     materials: [],
     quizzes: [],
     testRecords: [],
+    periodicTests: [],
+    deletedTestTitles: [],
     posts: [],
     customSubjects: [],
     quizSubmissions: [],
@@ -338,12 +352,15 @@ app.get('/api/data/rankings', (req, res) => {
         ? Math.floor(requestedLimit)
         : SERVER_PUBLIC_TOP_LIMIT;
 
-    const allRecords = data.testRecords || [];
+    const deletedSet = new Set(data.deletedTestTitles || []);
+    const allRecords = (data.testRecords || []).filter(
+      (r: any) => r?.testTitle && !deletedSet.has(r.testTitle)
+    );
     const testTitles = Array.from(
       new Set(allRecords.map((r: any) => r?.testTitle).filter((t: any) => typeof t === 'string' && t.trim()))
     );
 
-    if (!testTitle) {
+    if (!testTitle || deletedSet.has(testTitle)) {
       return res.json({
         testTitles,
         topRankings: [],
@@ -479,11 +496,24 @@ app.get('/api/data/rankings', (req, res) => {
   }
 });
 
-// 2. Safe bidirectional sync: merges client and server items by unique ID (union, never drops items)
+// 2. Safe bidirectional sync: merges client and server items by unique ID (union, never drops items, respects deletedTestTitles)
 app.post('/api/data/sync', (req, res) => {
   try {
-    const clientData: Partial<ServerData> & { studentNumber?: number } = req.body || {};
+    const clientData: Partial<ServerData> & {
+      studentNumber?: number;
+      restoredTestTitle?: string;
+    } = req.body || {};
     const serverData = loadServerStorage();
+
+    // Update deletedTestTitles (remove restoredTestTitle if user explicitly recreated it)
+    const deletedSet = new Set<string>([
+      ...(serverData.deletedTestTitles || []),
+      ...(Array.isArray(clientData.deletedTestTitles) ? clientData.deletedTestTitles : []),
+    ]);
+    if (typeof clientData.restoredTestTitle === 'string' && clientData.restoredTestTitle.trim()) {
+      deletedSet.delete(clientData.restoredTestTitle.trim());
+    }
+    const mergedDeletedTitles = Array.from(deletedSet);
 
     // Union merge materials
     const materialsMap = new Map<string, any>();
@@ -497,15 +527,25 @@ app.post('/api/data/sync', (req, res) => {
     (clientData.quizzes || []).forEach((q) => { if (q?.id) quizzesMap.set(q.id, q); });
     const mergedQuizzes = Array.from(quizzesMap.values());
 
-    // Union merge test records on disk (keyed by testTitle + studentNumber so partial client records don't drop others)
+    // Union merge periodic tests (excluding deleted)
+    const periodicMap = new Map<string, any>();
+    (serverData.periodicTests || []).forEach((p) => {
+      if (p?.id && p?.title && !deletedSet.has(p.title)) periodicMap.set(p.id, p);
+    });
+    (clientData.periodicTests || []).forEach((p) => {
+      if (p?.id && p?.title && !deletedSet.has(p.title)) periodicMap.set(p.id, p);
+    });
+    const mergedPeriodicTests = Array.from(periodicMap.values());
+
+    // Union merge test records on disk (excluding deleted test titles)
     const recordsMap = new Map<string, any>();
     (serverData.testRecords || []).forEach((r) => {
-      if (r?.testTitle && r?.studentNumber !== undefined) {
+      if (r?.testTitle && r?.studentNumber !== undefined && !deletedSet.has(r.testTitle)) {
         recordsMap.set(`${r.testTitle}__${r.studentNumber}`, r);
       }
     });
     (clientData.testRecords || []).forEach((r) => {
-      if (r?.testTitle && r?.studentNumber !== undefined) {
+      if (r?.testTitle && r?.studentNumber !== undefined && !deletedSet.has(r.testTitle)) {
         recordsMap.set(`${r.testTitle}__${r.studentNumber}`, r);
       }
     });
@@ -533,6 +573,8 @@ app.post('/api/data/sync', (req, res) => {
       materials: mergedMaterials,
       quizzes: mergedQuizzes,
       testRecords: mergedRecords,
+      periodicTests: mergedPeriodicTests,
+      deletedTestTitles: mergedDeletedTitles,
       posts: mergedPosts,
       customSubjects: mergedSubjects,
       quizSubmissions: mergedSubs,
@@ -554,6 +596,50 @@ app.post('/api/data/sync', (req, res) => {
   } catch (err: any) {
     console.error('Error during /api/data/sync:', err);
     res.status(500).json({ error: 'Sync failed', message: err.message });
+  }
+});
+
+// 2b. Cascade delete a periodic test and all associated testRecords on server
+app.delete('/api/data/tests', (req, res) => {
+  try {
+    const title =
+      typeof req.query.title === 'string'
+        ? req.query.title.trim()
+        : typeof req.body?.title === 'string'
+        ? req.body.title.trim()
+        : '';
+    const testId =
+      typeof req.query.testId === 'string'
+        ? req.query.testId.trim()
+        : typeof req.body?.testId === 'string'
+        ? req.body.testId.trim()
+        : '';
+
+    const current = loadServerStorage();
+    const deletedSet = new Set<string>(current.deletedTestTitles || []);
+    if (title) deletedSet.add(title);
+
+    const nextPeriodicTests = (current.periodicTests || []).filter((p: any) => {
+      if (testId && p?.id === testId) return false;
+      if (title && p?.title === title) return false;
+      return true;
+    });
+
+    const nextTestRecords = (current.testRecords || []).filter((r: any) => {
+      if (title && r?.testTitle === title) return false;
+      return true;
+    });
+
+    saveServerStorage({
+      periodicTests: nextPeriodicTests,
+      testRecords: nextTestRecords,
+      deletedTestTitles: Array.from(deletedSet),
+    });
+
+    res.json({ success: true, deletedTitle: title, deletedId: testId });
+  } catch (err: any) {
+    console.error('Error deleting test from server storage:', err);
+    res.status(500).json({ error: 'Failed to delete test', message: err.message });
   }
 });
 

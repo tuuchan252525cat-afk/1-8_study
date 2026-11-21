@@ -147,6 +147,17 @@
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["delta", "rateDelta"]
+    },
+    "DeletedTest": {
+      "title": "DeletedTest",
+      "description": "Tombstone record for deleted periodic tests to prevent stale clients or defaults from recreating them",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 128 },
+        "deletedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "title"]
     }
   },
   "firestore": {
@@ -197,6 +208,10 @@
     "/periodicTests/{testId}": {
       "schema": "PeriodicTestSchedule",
       "description": "Periodic test schedule dates for countdown"
+    },
+    "/deletedTests/{testId}": {
+      "schema": "DeletedTest",
+      "description": "Tombstones for deleted periodic tests"
     },
     "/students/{studentId}": {
       "schema": "Student",

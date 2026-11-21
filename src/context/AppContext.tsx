@@ -65,9 +65,12 @@ import {
   fetchQuizSubmissionsFromCloud,
   subscribeToQuizSubmissions,
   savePeriodicTestToCloud,
-  deletePeriodicTestFromCloud,
   fetchPeriodicTestsFromCloud,
   subscribeToPeriodicTests,
+  fetchDeletedTestTitlesFromCloud,
+  subscribeToDeletedTestTitles,
+  clearDeletedTestTombstone,
+  cascadeDeleteTestFromCloud,
   savePostToCloud,
   deletePostFromCloud,
   fetchPostsFromCloud,
@@ -117,7 +120,7 @@ interface AppContextType {
     maxScores?: SubjectScores
   ) => void;
   addPeriodicTest: (title: string, date: string) => Promise<void>;
-  deletePeriodicTest: (testId: string) => Promise<void>;
+  deletePeriodicTest: (testId: string, testTitle?: string) => Promise<void>;
 
   // Privacy Protected Rankings (Public TOP-N Only & Personal)
   anonymousRankings: AnonymousRankItem[];
@@ -189,6 +192,7 @@ const STORAGE_KEYS = {
   PASSWORDS: 'classhub_passwords',
   ACTIVE_TEST: 'classhub_active_test',
   PERIODIC_TESTS: 'classhub_periodic_tests',
+  DELETED_TEST_TITLES: 'classhub_deleted_test_titles',
   CUSTOM_SUBJECTS: 'classhub_custom_subjects',
 };
 
@@ -269,7 +273,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [customSubjects, setCustomSubjects] = useState<SubjectOption[]>([]);
   const [testRecords, setTestRecords] = useState<TestRecord[]>([]);
   const [periodicTests, setPeriodicTests] = useState<PeriodicTestSchedule[]>([]);
-  const [activeTestTitle, setActiveTestTitle] = useState<string>('第1回 定期考査');
+  const [deletedTestTitles, setDeletedTestTitles] = useState<string[]>([]);
+  const deletedTestTitlesRef = useRef<Set<string>>(new Set());
+  const [activeTestTitle, setActiveTestTitle] = useState<string>('');
   const [quizzes, setQuizzes] = useState<WeeklyQuiz[]>(INITIAL_QUIZZES);
   const [quizSubmissions, setQuizSubmissions] = useState<QuizResult[]>([]);
   const [materials, setMaterials] = useState<StudyMaterial[]>([]);
@@ -324,7 +330,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const rawLocalPosts = await getPersistentItem<ForumPost[]>(STORAGE_KEYS.POSTS, INITIAL_POSTS);
         const localPosts = (rawLocalPosts || []).filter((p) => p && !isOctoberPost(p));
         const localSubs = await getPersistentItem<QuizResult[]>(STORAGE_KEYS.QUIZ_SUBMISSIONS, INITIAL_QUIZ_SUBMISSIONS);
-        const localActiveTest = await getPersistentItem<string>(STORAGE_KEYS.ACTIVE_TEST, '第1回 定期考査');
+        const localActiveTest = await getPersistentItem<string>(STORAGE_KEYS.ACTIVE_TEST, '');
+        const localDeletedTitles = await getPersistentItem<string[]>(STORAGE_KEYS.DELETED_TEST_TITLES, []);
         const localQuizzes = await getPersistentItem<WeeklyQuiz[]>(STORAGE_KEYS.QUIZZES, INITIAL_QUIZZES);
         const localCustomSubjects = await getPersistentItem<SubjectOption[]>(STORAGE_KEYS.CUSTOM_SUBJECTS, []);
 
@@ -472,6 +479,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           });
         }
 
+        const cloudDeletedTitles = await fetchDeletedTestTitlesFromCloud().catch(() => [] as string[]);
+        const deletedSet = new Set<string>(
+          [
+            ...(localDeletedTitles || []),
+            ...(Array.isArray(serverData?.deletedTestTitles) ? serverData.deletedTestTitles : []),
+            ...(cloudDeletedTitles || []),
+          ]
+            .map((t) => (typeof t === 'string' ? t.trim() : ''))
+            .filter(Boolean)
+        );
+        const mergedDeletedTitles = Array.from(deletedSet);
+        deletedTestTitlesRef.current = deletedSet;
+
         let cloudRecords: TestRecord[] = [];
         try {
           cloudRecords = await fetchMyTestRecordsFromCloud(savedNum);
@@ -483,6 +503,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         [...(serverData?.testRecords || []), ...(localRecords || []), ...(cloudRecords || [])].forEach(
           (r: TestRecord) => {
             if (!r?.id || !r?.testTitle || r?.studentNumber !== savedNum) return;
+            if (deletedSet.has(r.testTitle.trim())) return;
             const dedupKey = `${r.testTitle}__${r.studentNumber}`;
             recordsMap.set(dedupKey, mergeTestRecord(recordsMap.get(dedupKey), r));
           }
@@ -492,7 +513,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         fetchLeaderboardTestTitles()
           .then((titles) => {
             if (isMounted && titles.length > 0) {
-              setLeaderboardTestTitles((prev) => Array.from(new Set([...prev, ...titles])));
+              const filtered = titles.filter((t) => !deletedTestTitlesRef.current.has(t));
+              if (filtered.length > 0) {
+                setLeaderboardTestTitles((prev) => Array.from(new Set([...prev, ...filtered])));
+              }
             }
           })
           .catch(() => {});
@@ -577,8 +601,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
         const localPeriodicTests = await getPersistentItem<PeriodicTestSchedule[]>(STORAGE_KEYS.PERIODIC_TESTS, []);
         const periodicMap = new Map<string, PeriodicTestSchedule>();
-        (localPeriodicTests || []).forEach((p) => { if (p?.id) periodicMap.set(p.id, p); });
-        (cloudPeriodicTests || []).forEach((p) => { if (p?.id) periodicMap.set(p.id, p); });
+        [...(serverData?.periodicTests || []), ...(localPeriodicTests || []), ...(cloudPeriodicTests || [])].forEach((p: PeriodicTestSchedule) => {
+          if (p?.id && p?.title && !deletedSet.has(p.title.trim())) {
+            periodicMap.set(p.id, p);
+          }
+        });
         const mergedPeriodicTests = Array.from(periodicMap.values()).sort((a, b) =>
           (a.date || '').localeCompare(b.date || '')
         );
@@ -588,18 +615,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         (localCustomSubjects || []).forEach((s) => { if (s?.key) subjectsMap.set(s.key, s); });
         const mergedSubjects = Array.from(subjectsMap.values());
 
+        const resolvedInitialActiveTest =
+          localActiveTest && !deletedSet.has(localActiveTest)
+            ? localActiveTest
+            : mergedPeriodicTests[0]?.title || mergedRecords[0]?.testTitle || '';
+
         if (isMounted) {
           setStudents(mergedStudents);
           setCurrentStudentNum(savedNum);
           setPasswords(mergedPasses);
           setIsLoggedIn(savedLoggedIn);
+          setDeletedTestTitles(mergedDeletedTitles);
+          setPersistentItem(STORAGE_KEYS.DELETED_TEST_TITLES, mergedDeletedTitles);
           setTestRecords(mergedRecords);
           setPeriodicTests(mergedPeriodicTests);
           setMaterials(mergedMaterials);
           setStudentPredictions(mergedPredictions);
           setPosts(mergedPosts);
           setQuizSubmissions(mergedSubs);
-          setActiveTestTitle(localActiveTest);
+          setActiveTestTitle(resolvedInitialActiveTest);
           setQuizzes(mergedQuizzes.length > 0 ? mergedQuizzes : INITIAL_QUIZZES);
           setCustomSubjects(mergedSubjects);
 
@@ -617,6 +651,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 materials: mergedMaterials,
                 quizzes: mergedQuizzes,
                 testRecords: mergedRecords,
+                periodicTests: mergedPeriodicTests,
+                deletedTestTitles: mergedDeletedTitles,
                 posts: mergedPosts,
                 customSubjects: mergedSubjects,
                 quizSubmissions: mergedSubs,
@@ -766,16 +802,57 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => unsubscribe();
   }, []);
 
+  // Keep deletedTestTitlesRef synchronized and subscribe to cloud tombstones
+  useEffect(() => {
+    deletedTestTitlesRef.current = new Set(deletedTestTitles);
+    if (isHydratedRef.current) {
+      setPersistentItem(STORAGE_KEYS.DELETED_TEST_TITLES, deletedTestTitles);
+    }
+  }, [deletedTestTitles]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToDeletedTestTitles((cloudDeletedList) => {
+      if (!cloudDeletedList) return;
+      const normalized = Array.from(
+        new Set(cloudDeletedList.map((t) => t.trim()).filter(Boolean))
+      );
+      setDeletedTestTitles((prev) => {
+        const merged = Array.from(new Set([...prev, ...normalized]));
+        deletedTestTitlesRef.current = new Set(merged);
+        if (isHydratedRef.current) {
+          setPersistentItem(STORAGE_KEYS.DELETED_TEST_TITLES, merged);
+        }
+        return merged;
+      });
+      if (normalized.length > 0) {
+        const delSet = new Set(normalized);
+        setPeriodicTests((prev) => {
+          const filtered = prev.filter((p) => !delSet.has(p.title.trim()));
+          if (filtered.length !== prev.length && isHydratedRef.current) {
+            setPersistentItem(STORAGE_KEYS.PERIODIC_TESTS, filtered);
+          }
+          return filtered;
+        });
+        setTestRecords((prev) => prev.filter((r) => !delSet.has(r.testTitle.trim())));
+        setLeaderboardTestTitles((prev) => prev.filter((t) => !delSet.has(t.trim())));
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
   // Real-time Firestore subscription for Periodic Test Schedules
   useEffect(() => {
     const unsubscribe = subscribeToPeriodicTests((cloudList) => {
       if (!cloudList) return;
+      const filteredCloud = cloudList.filter(
+        (p) => p?.title && !deletedTestTitlesRef.current.has(p.title.trim())
+      );
       setPeriodicTests((prev) => {
-        if (cloudList.length === 0 && prev.length === 0) return prev;
+        if (filteredCloud.length === 0 && prev.length === 0) return prev;
         if (isHydratedRef.current) {
-          setPersistentItem(STORAGE_KEYS.PERIODIC_TESTS, cloudList);
+          setPersistentItem(STORAGE_KEYS.PERIODIC_TESTS, filteredCloud);
         }
-        return cloudList;
+        return filteredCloud;
       });
     });
     return () => unsubscribe();
@@ -799,6 +876,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             const map = new Map<string, TestRecord>();
             [...prev, ...data.testRecords].forEach((r: TestRecord) => {
               if (!r?.id || !r?.testTitle || r.studentNumber !== currentStudentNum) return;
+              if (deletedTestTitlesRef.current.has(r.testTitle.trim())) return;
               const key = `${r.testTitle}__${r.studentNumber}`;
               map.set(key, mergeTestRecord(map.get(key), r));
             });
@@ -810,11 +888,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const unsubscribe = subscribeToMyTestRecords(currentStudentNum, (cloudList) => {
       if (cancelled || !cloudList) return;
+      const cloudFiltered = cloudList.filter(
+        (r) => r?.testTitle && !deletedTestTitlesRef.current.has(r.testTitle.trim())
+      );
       setTestRecords((prev) => {
-        const ownPrev = prev.filter((r) => r.studentNumber === currentStudentNum);
-        if (cloudList.length === 0 && ownPrev.length === 0) return ownPrev;
+        const ownPrev = prev.filter(
+          (r) => r.studentNumber === currentStudentNum && !deletedTestTitlesRef.current.has(r.testTitle.trim())
+        );
+        if (cloudFiltered.length === 0 && ownPrev.length === 0) return ownPrev;
         const map = new Map<string, TestRecord>();
-        [...ownPrev, ...cloudList].forEach((r) => {
+        [...ownPrev, ...cloudFiltered].forEach((r) => {
           if (!r?.id || !r?.testTitle || r.studentNumber !== currentStudentNum) return;
           const key = `${r.testTitle}__${r.studentNumber}`;
           map.set(key, mergeTestRecord(map.get(key), r));
@@ -835,9 +918,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Real-time Firestore subscriptions strictly limited to TOP-N anonymous leaderboards
   useEffect(() => {
-    if (!activeTestTitle) return;
     setCloudTopRankings([]);
     setCloudTopGrowthRankings([]);
+    if (!activeTestTitle || deletedTestTitlesRef.current.has(activeTestTitle)) return;
 
     const unsubRank = subscribeToPublicTopLeaderboard(
       activeTestTitle,
@@ -918,7 +1001,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   useEffect(() => {
     if (!isHydratedRef.current) return;
-    const ownOnly = testRecords.filter((r) => r.studentNumber === currentStudentNum);
+    const ownOnly = testRecords.filter(
+      (r) => r.studentNumber === currentStudentNum && !deletedTestTitlesRef.current.has(r.testTitle.trim())
+    );
     setPersistentItem(STORAGE_KEYS.TEST_RECORDS, ownOnly);
     if (!isStaticDeployment() && ownOnly.length > 0) {
       fetch('/api/data/sync', {
@@ -1233,7 +1318,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     if (!isHydratedRef.current || !currentStudentNum) return;
     const ownRecords = testRecords
-      .filter((r) => r.studentNumber === currentStudentNum)
+      .filter((r) => r.studentNumber === currentStudentNum && !deletedTestTitlesRef.current.has(r.testTitle.trim()))
       .sort((a, b) => (a.testDate || '').localeCompare(b.testDate || ''));
     ownRecords.forEach((rec, idx) => {
       const prevRec = idx > 0 ? ownRecords[idx - 1] : undefined;
@@ -1255,7 +1340,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Fetch server-side rank standing & participant count (never downloads other students' scores)
   useEffect(() => {
-    if (!activeTestTitle) return;
+    if (!activeTestTitle || deletedTestTitlesRef.current.has(activeTestTitle)) {
+      setServerStandingCounts({
+        totalParticipants: 0,
+        myRank: null,
+        growthRank: null,
+        serverTopRankings: [],
+        serverTopGrowthRankings: [],
+      });
+      return;
+    }
     let cancelled = false;
 
     const myScoreRate = myActiveTestRecord
@@ -1280,7 +1374,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (cancelled) return;
 
       if (Array.isArray(serverRes?.testTitles) && serverRes.testTitles.length > 0) {
-        setLeaderboardTestTitles((prev) => Array.from(new Set([...prev, ...serverRes.testTitles])));
+        const filteredTitles = serverRes.testTitles.filter(
+          (t: string) => typeof t === 'string' && !deletedTestTitlesRef.current.has(t.trim())
+        );
+        if (filteredTitles.length > 0) {
+          setLeaderboardTestTitles((prev) => Array.from(new Set([...prev, ...filteredTitles])));
+        }
       }
 
       const serverTotal = Number(serverRes?.totalParticipants) || 0;
@@ -1417,20 +1516,31 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const availableTestTitles = useMemo(() => {
+    const deletedSet = new Set(deletedTestTitles);
     const set = new Set<string>();
     periodicTests.forEach((p) => {
-      if (p.title) set.add(p.title);
+      if (p.title && !deletedSet.has(p.title.trim())) set.add(p.title.trim());
     });
     leaderboardTestTitles.forEach((t) => {
-      if (t) set.add(t);
+      if (t && !deletedSet.has(t.trim())) set.add(t.trim());
     });
-    if (activeTestTitle) set.add(activeTestTitle);
     testRecords.forEach((r) => {
-      if (r.testTitle) set.add(r.testTitle);
+      if (r.testTitle && !deletedSet.has(r.testTitle.trim())) set.add(r.testTitle.trim());
     });
-    if (set.size === 0) set.add('第1回 定期考査');
     return Array.from(set);
-  }, [periodicTests, leaderboardTestTitles, testRecords, activeTestTitle]);
+  }, [periodicTests, leaderboardTestTitles, testRecords, deletedTestTitles]);
+
+  // Keep activeTestTitle valid whenever availableTestTitles changes (e.g. after deletion)
+  useEffect(() => {
+    if (!isStorageHydrated) return;
+    if (availableTestTitles.length === 0) {
+      if (activeTestTitle !== '') setActiveTestTitle('');
+      return;
+    }
+    if (!activeTestTitle || !availableTestTitles.includes(activeTestTitle)) {
+      setActiveTestTitle(availableTestTitles[0]);
+    }
+  }, [isStorageHydrated, availableTestTitles, activeTestTitle]);
 
   // Anonymous TOP-N Rankings (strictly <= PUBLIC_TOP_LIMIT; 6th+ never queried or stored)
   const anonymousRankings = useMemo((): AnonymousRankItem[] => {
@@ -2030,6 +2140,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const addPeriodicTest = async (title: string, date: string) => {
     const trimmedTitle = title.trim();
     if (!trimmedTitle) return;
+
+    // Clear any prior deleted tombstone for this test title
+    deletedTestTitlesRef.current.delete(trimmedTitle);
+    setDeletedTestTitles((prev) => {
+      const next = prev.filter((t) => t !== trimmedTitle);
+      setPersistentItem(STORAGE_KEYS.DELETED_TEST_TITLES, next);
+      return next;
+    });
+
     setActiveTestTitle(trimmedTitle);
 
     const existing = periodicTests.find((p) => p.title === trimmedTitle);
@@ -2040,31 +2159,113 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       createdAt: existing?.createdAt || new Date().toISOString(),
     };
 
+    let nextSchedules: PeriodicTestSchedule[] = [];
     setPeriodicTests((prev) => {
-      const next = [...prev.filter((p) => p.id !== schedule.id), schedule].sort((a, b) =>
+      nextSchedules = [...prev.filter((p) => p.id !== schedule.id), schedule].sort((a, b) =>
         (a.date || '').localeCompare(b.date || '')
       );
-      setPersistentItem(STORAGE_KEYS.PERIODIC_TESTS, next);
-      return next;
+      setPersistentItem(STORAGE_KEYS.PERIODIC_TESTS, nextSchedules);
+      return nextSchedules;
     });
 
     try {
+      await clearDeletedTestTombstone(trimmedTitle);
       await savePeriodicTestToCloud(schedule);
     } catch (e) {
       console.warn('Periodic test cloud save notice:', e);
     }
+
+    if (!isStaticDeployment()) {
+      try {
+        await fetch('/api/data/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            restoredTestTitle: trimmedTitle,
+            periodicTests: nextSchedules.length > 0 ? nextSchedules : [schedule],
+          }),
+        });
+      } catch (e) {
+        console.warn('Periodic test server sync notice:', e);
+      }
+    }
   };
 
-  const deletePeriodicTest = async (testId: string) => {
+  const deletePeriodicTest = async (testId: string, testTitle?: string) => {
+    const matchedSchedule = testId ? periodicTests.find((p) => p.id === testId) : undefined;
+    const targetTitle = (testTitle || matchedSchedule?.title || '').trim();
+    const targetId = (testId || matchedSchedule?.id || '').trim();
+
+    if (targetTitle) {
+      deletedTestTitlesRef.current.add(targetTitle);
+      setDeletedTestTitles((prev) => {
+        const next = Array.from(new Set([...prev, targetTitle]));
+        setPersistentItem(STORAGE_KEYS.DELETED_TEST_TITLES, next);
+        return next;
+      });
+    }
+
+    let remainingPeriodic: PeriodicTestSchedule[] = [];
     setPeriodicTests((prev) => {
-      const next = prev.filter((p) => p.id !== testId);
-      setPersistentItem(STORAGE_KEYS.PERIODIC_TESTS, next);
-      return next;
+      remainingPeriodic = prev.filter((p) => {
+        if (targetId && p.id === targetId) return false;
+        if (targetTitle && p.title.trim() === targetTitle) return false;
+        return true;
+      });
+      setPersistentItem(STORAGE_KEYS.PERIODIC_TESTS, remainingPeriodic);
+      return remainingPeriodic;
     });
+
+    if (targetTitle) {
+      let remainingOwnRecords: TestRecord[] = [];
+      setTestRecords((prev) => {
+        const filtered = prev.filter((r) => r.testTitle.trim() !== targetTitle);
+        remainingOwnRecords = filtered.filter((r) => r.studentNumber === currentStudentNum);
+        setPersistentItem(STORAGE_KEYS.TEST_RECORDS, remainingOwnRecords);
+        return filtered;
+      });
+      setLeaderboardTestTitles((prev) => prev.filter((t) => t.trim() !== targetTitle));
+
+      if (activeTestTitle === targetTitle) {
+        setCloudTopRankings([]);
+        setCloudTopGrowthRankings([]);
+        setServerStandingCounts({
+          totalParticipants: 0,
+          myRank: null,
+          growthRank: null,
+          serverTopRankings: [],
+          serverTopGrowthRankings: [],
+        });
+      }
+    }
+
+    setCloudSyncStatus('syncing');
+    let cloudError: Error | null = null;
     try {
-      await deletePeriodicTestFromCloud(testId);
-    } catch (e) {
-      console.warn('Periodic test cloud delete notice:', e);
+      await cascadeDeleteTestFromCloud(targetTitle, targetId || undefined);
+      setCloudSyncStatus('connected');
+      setCloudSyncError(null);
+    } catch (e: any) {
+      cloudError = e instanceof Error ? e : new Error(String(e));
+      setCloudSyncStatus('error');
+      setCloudSyncError(cloudError.message || 'テストおよび関連成績データの削除に失敗しました');
+    }
+
+    if (!isStaticDeployment()) {
+      try {
+        const params = new URLSearchParams();
+        if (targetTitle) params.set('title', targetTitle);
+        if (targetId) params.set('testId', targetId);
+        await fetch(`/api/data/tests?${params.toString()}`, {
+          method: 'DELETE',
+        });
+      } catch (e) {
+        console.warn('Server test cascade delete notice:', e);
+      }
+    }
+
+    if (cloudError) {
+      throw cloudError;
     }
   };
 

@@ -47,13 +47,18 @@ export const ScoreManagementView: React.FC = () => {
               <select
                 value={activeTestTitle}
                 onChange={(e) => setActiveTestTitle(e.target.value)}
-                className="text-sm font-black text-slate-900 bg-[#fdfbf7] border border-stone-300 rounded-2xl py-2 px-3.5 focus:outline-none focus:border-[#1c603a] cursor-pointer shadow-2xs"
+                disabled={availableTestTitles.length === 0}
+                className="text-sm font-black text-slate-900 bg-[#fdfbf7] border border-stone-300 rounded-2xl py-2 px-3.5 focus:outline-none focus:border-[#1c603a] cursor-pointer shadow-2xs disabled:opacity-60"
               >
-                {availableTestTitles.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
+                {availableTestTitles.length === 0 ? (
+                  <option value="">登録されているテストがありません</option>
+                ) : (
+                  availableTestTitles.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))
+                )}
               </select>
               <span className="text-xs text-stone-500 font-bold bg-stone-100 px-2.5 py-1 rounded-xl tabular-nums">
                 {totalRecordCount}件の記録
@@ -140,7 +145,9 @@ export const ScoreManagementView: React.FC = () => {
                 </div>
                 <div>
                   <p className="text-sm font-black text-slate-800">
-                    「{activeTestTitle}」の記録がまだありません
+                    {activeTestTitle
+                      ? `「${activeTestTitle}」の記録がまだありません`
+                      : '定期テストがまだ登録されていません'}
                   </p>
                   <p className="text-xs text-stone-500 mt-1">
                     「点数を記録・追加」ボタンからテスト結果を保存すると、成績上位者のランキングが公開されます。
@@ -270,7 +277,9 @@ export const ScoreManagementView: React.FC = () => {
                   <Trophy className="w-5 h-5" />
                 </div>
                 <p className="text-sm font-black text-slate-800">
-                  「{activeTestTitle}」の上位スコアデータがまだありません
+                  {activeTestTitle
+                    ? `「${activeTestTitle}」の上位スコアデータがまだありません`
+                    : '定期テストがまだ登録されていません'}
                 </p>
                 <p className="text-xs text-stone-500">
                   点数を記録すると、成績上位者（TOP {PUBLIC_TOP_LIMIT}）の平均点サマリーと比較グラフが表示されます。

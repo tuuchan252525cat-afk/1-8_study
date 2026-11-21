@@ -11,6 +11,7 @@ interface Props {
 export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
   const {
     availableTestTitles,
+    activeTestTitle,
     saveMyScore,
     testRecords,
     currentStudent,
@@ -19,7 +20,7 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
     deleteCustomSubject,
   } = useApp();
 
-  const [testTitle, setTestTitle] = useState(availableTestTitles[0] || '第2回 校内実力模試（10月）');
+  const [testTitle, setTestTitle] = useState(activeTestTitle || availableTestTitles[0] || '');
   const [testDate, setTestDate] = useState('2026-10-18');
 
   // New Custom Subject inline modal state
@@ -69,6 +70,21 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
       setValidationNotice(null);
     }
   }, [isOpen]);
+
+  // Keep selected testTitle strictly synchronized with availableTestTitles (never keep a deleted test)
+  useEffect(() => {
+    if (availableTestTitles.length === 0) {
+      if (testTitle !== '') setTestTitle('');
+      return;
+    }
+    if (!testTitle || !availableTestTitles.includes(testTitle)) {
+      const nextTitle =
+        activeTestTitle && availableTestTitles.includes(activeTestTitle)
+          ? activeTestTitle
+          : availableTestTitles[0];
+      setTestTitle(nextTitle);
+    }
+  }, [isOpen, availableTestTitles, activeTestTitle, testTitle]);
 
   // Sync scores, maxScores, and subject selection when modal opens or testTitle / student changes
   useEffect(() => {
@@ -322,6 +338,10 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!testTitle || !availableTestTitles.includes(testTitle)) {
+      setValidationNotice('対象の定期テストが選択されていません。「定期テスト日程一覧」からテストを追加してください。');
+      return;
+    }
     if (activeCount === 0) {
       setValidationNotice('少なくとも1教科を選択してください。');
       return;
@@ -383,14 +403,18 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
             <select
               value={testTitle}
               onChange={(e) => setTestTitle(e.target.value)}
-              className="w-full text-xs font-black border border-stone-300 rounded-2xl p-3 bg-[#fdfbf7] focus:bg-white focus:outline-none focus:border-[#1c603a] cursor-pointer shadow-2xs"
+              disabled={availableTestTitles.length === 0}
+              className="w-full text-xs font-black border border-stone-300 rounded-2xl p-3 bg-[#fdfbf7] focus:bg-white focus:outline-none focus:border-[#1c603a] cursor-pointer shadow-2xs disabled:opacity-60"
             >
-              {availableTestTitles.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-              <option value="11月中間テスト（追加）">11月中間テスト（新規追加）</option>
+              {availableTestTitles.length === 0 ? (
+                <option value="">テストが登録されていません（「問題編集」から追加）</option>
+              ) : (
+                availableTestTitles.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))
+              )}
             </select>
           </div>
 
@@ -624,7 +648,7 @@ export const ScoreInputModal: React.FC<Props> = ({ isOpen, onClose }) => {
             </button>
             <button
               type="submit"
-              disabled={savedSuccess || activeCount === 0 || hasInvalidMax}
+              disabled={savedSuccess || activeCount === 0 || hasInvalidMax || !testTitle}
               className="px-6 py-2.5 text-xs font-black text-white bg-[#1c603a] hover:bg-[#154a2c] rounded-2xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               {savedSuccess ? (

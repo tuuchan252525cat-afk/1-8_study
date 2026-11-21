@@ -62,6 +62,8 @@
         "scores": { "type": "object" },
         "maxScores": { "type": "object" },
         "subjectDetails": { "type": "array" },
+        "subjectCount": { "type": "number" },
+        "averageScore": { "type": "number" },
         "totalScore": { "type": "number" },
         "totalMaxScore": { "type": "number" },
         "updatedAt": { "type": "string", "maxLength": 64 }
@@ -132,21 +134,21 @@
         "score": { "type": "number" },
         "maxScore": { "type": "number" },
         "scoreRate": { "type": "number" },
+        "subjectCount": { "type": "number" },
+        "averageScore": { "type": "number" },
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["score", "maxScore", "scoreRate"]
     },
     "GrowthLeaderboardEntry": {
       "title": "GrowthLeaderboardEntry",
-      "description": "Anonymous growth entry in a per-test growth leaderboard (contains NO student identity)",
+      "description": "Anonymous growth entry in a per-test growth leaderboard (contains NO student identity, rateDelta only)",
       "type": "object",
       "properties": {
-        "delta": { "type": "number" },
         "rateDelta": { "type": "number" },
-        "hasDifferentMax": { "type": "boolean" },
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
-      "required": ["delta", "rateDelta"]
+      "required": ["rateDelta"]
     },
     "DeletedTest": {
       "title": "DeletedTest",

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { PersonalStandingCard } from './PersonalStandingCard';
 import { ScoreInputModal } from './ScoreInputModal';
-import { PUBLIC_TOP_LIMIT } from '../utils/privacyRankings';
+import { PUBLIC_TOP_LIMIT, calcSubjectAverage, formatSignedRate } from '../utils/privacyRankings';
 import { Plus, Award, Trophy, ShieldCheck } from 'lucide-react';
 
 export const ScoreManagementView: React.FC = () => {
@@ -171,6 +171,12 @@ export const ScoreManagementView: React.FC = () => {
                       item.scoreRate !== undefined
                         ? item.scoreRate
                         : Math.round((item.score / itemMax) * 1000) / 10;
+                    const itemAvg =
+                      typeof item.averageScore === 'number'
+                        ? item.averageScore
+                        : typeof item.subjectCount === 'number' && item.subjectCount >= 1
+                          ? calcSubjectAverage(item.score, item.subjectCount)
+                          : undefined;
 
                     const isMatch =
                       personalStanding.rank > 0 &&
@@ -226,10 +232,18 @@ export const ScoreManagementView: React.FC = () => {
                               </span>
                             )}
                           </div>
-                          <div className="text-[11px] text-stone-500 font-bold mt-0.5 flex items-center gap-1">
+                          <div className="text-[11px] text-stone-500 font-bold mt-0.5 flex items-center gap-1 flex-wrap tabular-nums">
                             <span>◎ 1年8組</span>
                             <span aria-hidden="true">·</span>
                             <span>得点率 {itemRate}%</span>
+                            {itemAvg !== undefined && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="text-[#1c603a] font-black">
+                                  全教科平均 {itemAvg.toFixed(1)}点
+                                </span>
+                              </>
+                            )}
                           </div>
                         </div>
 
@@ -414,7 +428,7 @@ export const ScoreManagementView: React.FC = () => {
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-stone-600 font-bold mb-3 px-1">
               <span className="text-slate-800">
-                ◎ 前回テスト比較 · 伸び率ランキング（氏名・出席番号は完全非公開）
+                ◎ 最低平均点比 · 総合得点率上昇ランキング（氏名・出席番号は完全非公開）
               </span>
               <span className="text-[#1c603a] bg-[#f4f8f5] border border-[#1c603a]/20 px-2.5 py-0.5 rounded-lg font-black">
                 上位{PUBLIC_TOP_LIMIT}名限定公開（TOP {PUBLIC_TOP_LIMIT}）
@@ -425,76 +439,75 @@ export const ScoreManagementView: React.FC = () => {
               <div className="p-8 text-center bg-[#fdfbf7] rounded-3xl border border-stone-200 space-y-2">
                 <p className="text-sm font-black text-slate-800">成長度データは集計中です</p>
                 <p className="text-xs text-stone-500">
-                  点数を記録すると、成績上位者（前回比の伸び率TOP {PUBLIC_TOP_LIMIT}）のランキングが公開されます。
+                  点数を記録すると、最低全教科平均点の回からの総合得点率上昇ランキング（TOP {PUBLIC_TOP_LIMIT}）が公開されます。
                 </p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {visibleTopGrowthRankings.map((item, index) => {
-                  const isMyGrowth =
-                    personalStanding.growthRank !== undefined &&
-                    personalStanding.growthRank <= PUBLIC_TOP_LIMIT &&
-                    personalStanding.growthRank === item.rank &&
-                    personalStanding.growthDelta === item.delta;
+                {(() => {
+                  let userGrowthShown = false;
+                  return visibleTopGrowthRankings.map((item, index) => {
+                    const isMatch =
+                      personalStanding.growthRank !== undefined &&
+                      personalStanding.growthRank <= PUBLIC_TOP_LIMIT &&
+                      personalStanding.growthRank === item.rank &&
+                      personalStanding.growthRateDelta !== undefined &&
+                      Math.abs(personalStanding.growthRateDelta - item.rateDelta) < 0.05;
+                    const isMyGrowth = isMatch && !userGrowthShown;
+                    if (isMyGrowth) userGrowthShown = true;
 
-                  const deltaLabel = item.delta > 0 ? `+${item.delta}` : `${item.delta}`;
-                  const rateLabel =
-                    item.rateDelta !== undefined
-                      ? `得点率 ${item.rateDelta > 0 ? `+${item.rateDelta}` : item.rateDelta}%`
-                      : null;
+                    const isPositiveRate = item.rateDelta > 0.05;
+                    const isNegativeRate = item.rateDelta < -0.05;
 
-                  return (
-                    <div
-                      key={`growth-${index}`}
-                      className={`p-3.5 sm:p-4 rounded-2xl border transition-all flex items-center justify-between ${
-                        isMyGrowth
-                          ? 'bg-[#f4f8f5] border-[#1c603a] ring-2 ring-[#1c603a]/20 shadow-xs'
-                          : 'bg-white hover:bg-[#fdfbf7] border-stone-200/90 shadow-2xs'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div
-                          className={`w-10 h-10 rounded-2xl flex flex-col items-center justify-center font-black text-xs shrink-0 ${
-                            item.rank === 1
-                              ? 'bg-emerald-500 text-white shadow-2xs'
-                              : 'bg-stone-100 text-slate-700 border border-stone-200'
-                          }`}
-                        >
-                          <span className="text-[9px] leading-none opacity-80">UP</span>
-                          <span className="text-xs font-black leading-none mt-0.5">{item.rank}位</span>
-                        </div>
-
-                        <div>
-                          <div className="flex items-baseline gap-1.5 flex-wrap">
-                            <span
-                              className={`text-base font-black tabular-nums ${
-                                item.delta >= 0 ? 'text-[#1c603a]' : 'text-rose-600'
-                              }`}
-                            >
-                              {deltaLabel}
-                            </span>
-                            <span className="text-xs font-bold text-stone-500">
-                              {item.delta > 0 ? '点アップ' : '点'}
-                            </span>
-                            {rateLabel && (
-                              <span className="text-[11px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.5 rounded-md tabular-nums">
-                                {rateLabel}
-                              </span>
-                            )}
-                            {isMyGrowth && (
-                              <span className="text-[10px] font-black text-white bg-[#1c603a] px-2 py-0.5 rounded-md ml-1">
-                                あなた
-                              </span>
-                            )}
+                    return (
+                      <div
+                        key={`growth-${index}`}
+                        className={`p-3.5 sm:p-4 rounded-2xl border transition-all flex items-center justify-between ${
+                          isMyGrowth
+                            ? 'bg-[#f4f8f5] border-[#1c603a] ring-2 ring-[#1c603a]/20 shadow-xs'
+                            : 'bg-white hover:bg-[#fdfbf7] border-stone-200/90 shadow-2xs'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div
+                            className={`w-10 h-10 rounded-2xl flex flex-col items-center justify-center font-black text-xs shrink-0 ${
+                              item.rank === 1
+                                ? 'bg-emerald-500 text-white shadow-2xs'
+                                : 'bg-stone-100 text-slate-700 border border-stone-200'
+                            }`}
+                          >
+                            <span className="text-[9px] leading-none opacity-80">UP</span>
+                            <span className="text-xs font-black leading-none mt-0.5">{item.rank}位</span>
                           </div>
-                          <span className="text-[11px] text-stone-500 font-bold block mt-0.5">
-                            ◎ 前回模試からの向上スコア
-                          </span>
+
+                          <div>
+                            <div className="flex items-baseline gap-1.5 flex-wrap">
+                              <span
+                                className={`text-lg font-black tabular-nums ${
+                                  isPositiveRate
+                                    ? 'text-[#1c603a]'
+                                    : isNegativeRate
+                                    ? 'text-rose-600'
+                                    : 'text-slate-800'
+                                }`}
+                              >
+                                {formatSignedRate(item.rateDelta)}
+                              </span>
+                              {isMyGrowth && (
+                                <span className="text-[10px] font-black text-white bg-[#1c603a] px-2 py-0.5 rounded-md ml-1">
+                                  あなた
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[11px] text-stone-500 font-bold block mt-0.5">
+                              ◎ 最低全教科平均点の回からの得点率上昇
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  });
+                })()}
               </div>
             )}
           </div>

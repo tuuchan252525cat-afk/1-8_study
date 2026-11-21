@@ -1,6 +1,15 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
+  calcRatePercent,
+  calcSubjectAverage,
+  calculateLowestAverageRateDelta,
+  findLowestAverageBaselineRecord,
+  formatSignedRate,
+  getRecordSubjectAverage,
+  resolveRecordMaxScore,
+} from '../utils/privacyRankings';
+import {
   Award,
   TrendingUp,
   Check,
@@ -13,11 +22,15 @@ import {
   CheckCircle2,
   Target,
   ChevronRight,
+  ClipboardList,
 } from 'lucide-react';
 
 export const MyPageView: React.FC = () => {
   const {
     currentStudent,
+    currentStudentNum,
+    testRecords,
+    availableTestTitles,
     updateNickname,
     updatePassword,
     personalStanding,
@@ -244,7 +257,21 @@ export const MyPageView: React.FC = () => {
                 / {personalStanding.totalMaxScore || 500}点満点
               </span>
             </div>
-            <p className="text-[11px] text-[#1c603a] font-black mt-1 tabular-nums">
+            {personalStanding.rank > 0 && (
+              <p className="text-[11px] text-[#1c603a] font-black mt-1 tabular-nums">
+                全教科平均：
+                {(
+                  personalStanding.averageScore ??
+                  calcSubjectAverage(
+                    personalStanding.totalScore,
+                    personalStanding.subjectCount ||
+                      Math.max(1, Math.round((personalStanding.totalMaxScore || 500) / 100))
+                  )
+                ).toFixed(1)}
+                点
+              </p>
+            )}
+            <p className="text-[11px] text-stone-500 font-bold mt-0.5 tabular-nums">
               {personalStanding.totalMaxScore !== undefined && personalStanding.scoreRate !== undefined
                 ? `◎ 得点率 ${personalStanding.scoreRate}% (全${Math.max(personalStanding.totalParticipants, 1)}件中)`
                 : '◎ 点数を記録すると集計されます'}
@@ -256,18 +283,14 @@ export const MyPageView: React.FC = () => {
               <div className="w-9 h-9 rounded-2xl bg-emerald-50 border border-emerald-200 text-[#1c603a] flex items-center justify-center">
                 <TrendingUp className="w-5 h-5" />
               </div>
-              <span className="text-xs font-black text-slate-800">成長度順位</span>
+              <span className="text-xs font-black text-slate-800">成長度順位（最低平均点比）</span>
             </div>
             <div className="text-2xl font-black text-[#1c603a] tabular-nums">
               {personalStanding.growthRank ? (
                 <>
                   {personalStanding.growthRank}
-                  <span className="text-xs font-bold text-stone-500 ml-1">
-                    位 ({personalStanding.growthDelta && personalStanding.growthDelta > 0 ? `+${personalStanding.growthDelta}` : personalStanding.growthDelta}点
-                    {personalStanding.growthRateDelta !== undefined
-                      ? ` / ${personalStanding.growthRateDelta > 0 ? `+${personalStanding.growthRateDelta}` : personalStanding.growthRateDelta}%`
-                      : ''}
-                    )
+                  <span className="text-xs font-bold text-stone-600 ml-1">
+                    位 ({formatSignedRate(personalStanding.growthRateDelta ?? 0)})
                   </span>
                 </>
               ) : (
@@ -275,10 +298,117 @@ export const MyPageView: React.FC = () => {
               )}
             </div>
             <p className="text-[11px] text-stone-500 font-bold mt-1">
-              ◎ 前回テストからの向上順位
+              ◎ 最低全教科平均点の回からの得点率上昇順位
             </p>
           </div>
         </div>
+
+        {/* Personal Periodic Test History List */}
+        {(() => {
+          const validTitleSet = new Set(availableTestTitles);
+          const myHistoryRecords = testRecords
+            .filter(
+              (r) =>
+                r.studentNumber === currentStudentNum &&
+                (validTitleSet.size === 0 || validTitleSet.has(r.testTitle.trim()))
+            )
+            .sort((a, b) => (b.testDate || '').localeCompare(a.testDate || ''));
+
+          const baselineRecord = findLowestAverageBaselineRecord(myHistoryRecords);
+
+          return (
+            <div className="bg-[#F5F4EE] rounded-3xl p-4 sm:p-5 border border-stone-200/80 space-y-3.5">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-50 border border-emerald-200 text-[#1c603a] flex items-center justify-center shrink-0">
+                    <ClipboardList className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm sm:text-base font-black text-slate-900">
+                      定期テスト成績履歴一覧
+                    </h4>
+                    <p className="text-[11px] font-semibold text-slate-500">
+                      最低全教科平均点の回を基準とした総合得点率の成長度と各回の全教科平均点を表示しています
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setCurrentTab('scores')}
+                  className="inline-flex items-center gap-1 px-3.5 py-2 rounded-2xl bg-white hover:bg-stone-50 border border-stone-200 text-xs font-black text-[#1c603a] cursor-pointer shadow-2xs"
+                >
+                  <span>成績管理へ</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {myHistoryRecords.length === 0 ? (
+                <div className="bg-white rounded-2xl p-5 border border-stone-200/80 text-center text-xs font-bold text-stone-500">
+                  まだ定期テストの成績記録がありません。「成績管理」タブから点数を記録してください。
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {myHistoryRecords.map((rec) => {
+                    const maxScore = resolveRecordMaxScore(rec);
+                    const rate = calcRatePercent(rec.totalScore, maxScore) ?? 0;
+                    const avg = getRecordSubjectAverage(rec);
+                    const { rateDelta } = calculateLowestAverageRateDelta(rec, myHistoryRecords);
+                    const isBaseline =
+                      baselineRecord !== null &&
+                      (baselineRecord.id === rec.id || baselineRecord.testTitle === rec.testTitle);
+
+                    return (
+                      <div
+                        key={rec.id || rec.testTitle}
+                        className="bg-white rounded-2xl p-4 border border-stone-200/80 shadow-2xs flex flex-col justify-between gap-2"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-sm font-black text-slate-900 truncate">
+                                {rec.testTitle}
+                              </span>
+                              {isBaseline && myHistoryRecords.length > 1 && (
+                                <span className="text-[10px] font-black text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-md">
+                                  比較基準（最低平均）
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[11px] font-bold text-stone-400">
+                              {rec.testDate || '日付未設定'}
+                            </span>
+                          </div>
+                          <span
+                            className={`text-sm font-black tabular-nums shrink-0 ${
+                              rateDelta > 0.05
+                                ? 'text-[#1c603a]'
+                                : rateDelta < -0.05
+                                ? 'text-rose-600'
+                                : 'text-slate-600'
+                            }`}
+                          >
+                            成長度：{formatSignedRate(rateDelta)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-baseline justify-between gap-2 pt-2 border-t border-stone-100 text-xs tabular-nums">
+                          <span className="font-black text-slate-900">
+                            {rec.totalScore}
+                            <span className="text-stone-500 font-bold"> / {maxScore}点</span>
+                            <span className="text-stone-500 font-bold ml-1.5">({rate}%)</span>
+                          </span>
+                          <span className="font-black text-[#1c603a]">
+                            全教科平均：{avg.toFixed(1)}点
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Cloud-Synced Quiz Results Card */}
         <div className="bg-[#F5F4EE] rounded-3xl p-4 sm:p-5 border border-stone-200/80 space-y-4">

@@ -28,6 +28,11 @@ import {
 import {
   PUBLIC_TOP_LIMIT,
   calcRatePercent,
+  calcSubjectAverage,
+  getRecordSubjectCount,
+  getRecordSubjectAverage,
+  calculateLowestAverageRateDelta,
+  resolveRecordMaxScore,
   calculateAnonymousRankings,
   calculatePersonalStanding,
   limitTopRankings,
@@ -231,22 +236,7 @@ function getStudentFallbackLabel(attendanceNumber: number): string {
 }
 
 function getRecordMaxScore(r: TestRecord): number {
-  if (typeof r.totalMaxScore === 'number' && r.totalMaxScore > 0) {
-    return r.totalMaxScore;
-  }
-  if (Array.isArray(r.subjectDetails) && r.subjectDetails.length > 0) {
-    const sum = r.subjectDetails.reduce((acc, d) => acc + (Number(d.maxScore) || 100), 0);
-    if (sum > 0) return sum;
-  }
-  if (r.scores) {
-    const keys = Object.keys(r.scores).filter(
-      (k) => r.scores[k] !== undefined && r.scores[k] !== null
-    );
-    if (keys.length > 0) {
-      return keys.reduce((acc, k) => acc + (Number(r.maxScores?.[k] ?? 100) || 100), 0);
-    }
-  }
-  return 500;
+  return resolveRecordMaxScore(r);
 }
 
 function mergeTestRecord(existing: TestRecord | undefined, incoming: TestRecord): TestRecord {
@@ -297,9 +287,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     growthRank: number | null;
     serverTopRankings: AnonymousRankItem[];
     serverTopGrowthRankings: AnonymousGrowthItem[];
-    serverGrowthDelta?: number | null;
     serverGrowthRateDelta?: number | null;
-    serverHasDifferentMax?: boolean;
+    serverSubjectCount?: number | null;
+    serverAverageScore?: number | null;
   }>({
     totalParticipants: 0,
     myRank: null,
@@ -1288,31 +1278,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [customSubjects]);
 
   // Score Management
-  const myActiveTestRecord = useMemo(() => {
-    return testRecords.find(
-      (r) => r.testTitle === activeTestTitle && r.studentNumber === currentStudentNum
+  const myAllRecords = useMemo(() => {
+    return testRecords.filter(
+      (r) => r.studentNumber === currentStudentNum && !deletedTestTitlesRef.current.has(r.testTitle.trim())
     );
-  }, [testRecords, activeTestTitle, currentStudentNum]);
+  }, [testRecords, currentStudentNum, deletedTestTitles]);
 
-  const myPrevTestRecord = useMemo(() => {
-    const others = testRecords
-      .filter((r) => r.studentNumber === currentStudentNum && r.testTitle !== activeTestTitle)
-      .sort((a, b) => (a.testDate || '').localeCompare(b.testDate || ''));
-    return others.length > 0 ? others[others.length - 1] : undefined;
-  }, [testRecords, currentStudentNum, activeTestTitle]);
+  const myActiveTestRecord = useMemo(() => {
+    return myAllRecords.find((r) => r.testTitle === activeTestTitle);
+  }, [myAllRecords, activeTestTitle]);
 
   const myActiveGrowth = useMemo(() => {
-    if (!myActiveTestRecord || !myPrevTestRecord) return null;
-    const prevMax = getRecordMaxScore(myPrevTestRecord);
-    const currMax = getRecordMaxScore(myActiveTestRecord);
-    const prevRate = calcRatePercent(myPrevTestRecord.totalScore, prevMax) ?? 0;
-    const currRate = calcRatePercent(myActiveTestRecord.totalScore, currMax) ?? 0;
-    return {
-      delta: myActiveTestRecord.totalScore - myPrevTestRecord.totalScore,
-      rateDelta: Math.round((currRate - prevRate) * 10) / 10,
-      hasDifferentMax: prevMax !== currMax,
-    };
-  }, [myActiveTestRecord, myPrevTestRecord]);
+    if (!myActiveTestRecord) return null;
+    return calculateLowestAverageRateDelta(myActiveTestRecord, myAllRecords);
+  }, [myActiveTestRecord, myAllRecords]);
 
   // Mirror only the logged-in user's own test records to anonymous leaderboards
   useEffect(() => {
@@ -1320,21 +1299,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const ownRecords = testRecords
       .filter((r) => r.studentNumber === currentStudentNum && !deletedTestTitlesRef.current.has(r.testTitle.trim()))
       .sort((a, b) => (a.testDate || '').localeCompare(b.testDate || ''));
-    ownRecords.forEach((rec, idx) => {
-      const prevRec = idx > 0 ? ownRecords[idx - 1] : undefined;
-      let growthInfo: { delta: number; rateDelta: number; hasDifferentMax: boolean } | null = null;
-      if (prevRec) {
-        const prevMax = getRecordMaxScore(prevRec);
-        const currMax = getRecordMaxScore(rec);
-        const prevRate = calcRatePercent(prevRec.totalScore, prevMax) ?? 0;
-        const currRate = calcRatePercent(rec.totalScore, currMax) ?? 0;
-        growthInfo = {
-          delta: rec.totalScore - prevRec.totalScore,
-          rateDelta: Math.round((currRate - prevRate) * 10) / 10,
-          hasDifferentMax: prevMax !== currMax,
-        };
-      }
-      syncTestRecordToAnonymousLeaderboards(rec, growthInfo).catch(() => {});
+    ownRecords.forEach((rec) => {
+      const { rateDelta } = calculateLowestAverageRateDelta(rec, ownRecords);
+      syncTestRecordToAnonymousLeaderboards(rec, { rateDelta }).catch(() => {});
     });
   }, [testRecords, currentStudentNum]);
 
@@ -1398,15 +1365,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         serverTopGrowthRankings: Array.isArray(serverRes?.topGrowthRankings)
           ? serverRes.topGrowthRankings
           : [],
-        serverGrowthDelta:
-          typeof serverRes?.myStanding?.growthDelta === 'number'
-            ? serverRes.myStanding.growthDelta
-            : null,
         serverGrowthRateDelta:
           typeof serverRes?.myStanding?.growthRateDelta === 'number'
             ? serverRes.myStanding.growthRateDelta
             : null,
-        serverHasDifferentMax: Boolean(serverRes?.myStanding?.hasDifferentMax),
+        serverSubjectCount:
+          typeof serverRes?.myStanding?.subjectCount === 'number'
+            ? serverRes.myStanding.subjectCount
+            : null,
+        serverAverageScore:
+          typeof serverRes?.myStanding?.averageScore === 'number'
+            ? serverRes.myStanding.averageScore
+            : null,
       });
     };
 
@@ -1444,6 +1414,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const total: number = subjectDetails.reduce((acc, d) => acc + d.score, 0);
     const totalMax: number = Math.max(1, subjectDetails.reduce((acc, d) => acc + d.maxScore, 0));
+    const subjectCount = Math.max(1, subjectDetails.length);
+    const averageScore = calcSubjectAverage(total, subjectCount);
     const nowIso = new Date().toISOString();
 
     const existingRecord = testRecords.find(
@@ -1456,6 +1428,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           scores: normalizedScores,
           maxScores: normalizedMaxScores,
           subjectDetails,
+          subjectCount,
+          averageScore,
           totalScore: total,
           totalMaxScore: totalMax,
           updatedAt: nowIso,
@@ -1468,28 +1442,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           scores: normalizedScores,
           maxScores: normalizedMaxScores,
           subjectDetails,
+          subjectCount,
+          averageScore,
           totalScore: total,
           totalMaxScore: totalMax,
           updatedAt: nowIso,
         };
 
-    const otherUserRecords = testRecords
-      .filter((r) => r.studentNumber === currentStudentNum && r.testTitle !== testTitle)
-      .sort((a, b) => (a.testDate || '').localeCompare(b.testDate || ''));
-    const priorRecord =
-      otherUserRecords.length > 0 ? otherUserRecords[otherUserRecords.length - 1] : undefined;
-
-    let growthInfo: { delta: number; rateDelta: number; hasDifferentMax: boolean } | null = null;
-    if (priorRecord) {
-      const prevMax = getRecordMaxScore(priorRecord);
-      const prevRate = calcRatePercent(priorRecord.totalScore, prevMax) ?? 0;
-      const currRate = calcRatePercent(total, totalMax) ?? 0;
-      growthInfo = {
-        delta: total - priorRecord.totalScore,
-        rateDelta: Math.round((currRate - prevRate) * 10) / 10,
-        hasDifferentMax: prevMax !== totalMax,
-      };
-    }
+    const updatedStudentRecords = [
+      nextRecord,
+      ...testRecords.filter(
+        (r) =>
+          r.studentNumber === currentStudentNum &&
+          r.testTitle !== testTitle &&
+          !deletedTestTitlesRef.current.has(r.testTitle.trim())
+      ),
+    ];
+    const { rateDelta } = calculateLowestAverageRateDelta(nextRecord, updatedStudentRecords);
 
     setTestRecords((prev) => {
       const ownPrev = prev.filter((r) => r.studentNumber === currentStudentNum);
@@ -1506,7 +1475,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     setLeaderboardTestTitles((prev) => Array.from(new Set([...prev, testTitle])));
 
-    saveTestRecordToCloud(nextRecord, growthInfo)
+    saveTestRecordToCloud(nextRecord, { rateDelta })
       .then(() => {
         setStandingRefreshTick((t) => t + 1);
       })
@@ -1552,12 +1521,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
     if (myActiveTestRecord) {
       const maxScore = getRecordMaxScore(myActiveTestRecord);
+      const subjectCount = getRecordSubjectCount(myActiveTestRecord);
+      const averageScore = getRecordSubjectAverage(myActiveTestRecord);
       return [
         {
           rank: 1,
           score: myActiveTestRecord.totalScore,
           maxScore,
           scoreRate: calcRatePercent(myActiveTestRecord.totalScore, maxScore),
+          subjectCount,
+          averageScore,
         },
       ];
     }
@@ -1576,9 +1549,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return [
         {
           rank: 1,
-          delta: myActiveGrowth.delta,
           rateDelta: myActiveGrowth.rateDelta,
-          hasDifferentMax: myActiveGrowth.hasDifferentMax,
         },
       ];
     }
@@ -1605,6 +1576,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const myMax = getRecordMaxScore(myActiveTestRecord);
     const myRate = calcRatePercent(myActiveTestRecord.totalScore, myMax);
+    const subjectCount =
+      serverStandingCounts.serverSubjectCount ?? getRecordSubjectCount(myActiveTestRecord);
+    const averageScore =
+      serverStandingCounts.serverAverageScore ?? getRecordSubjectAverage(myActiveTestRecord);
     const totalParticipants = Math.max(
       serverStandingCounts.totalParticipants,
       anonymousRankings.length,
@@ -1625,21 +1600,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
 
-    const growthDelta =
-      myActiveGrowth?.delta ?? serverStandingCounts.serverGrowthDelta ?? undefined;
     const growthRateDelta =
-      myActiveGrowth?.rateDelta ?? serverStandingCounts.serverGrowthRateDelta ?? undefined;
-    const hasDifferentMax =
-      myActiveGrowth?.hasDifferentMax ?? serverStandingCounts.serverHasDifferentMax ?? false;
+      myActiveGrowth?.rateDelta ?? serverStandingCounts.serverGrowthRateDelta ?? 0;
+    const baselineTestTitle = myActiveGrowth?.baselineTestTitle ?? undefined;
 
     let resolvedGrowthRank = serverStandingCounts.growthRank ?? undefined;
-    if (!resolvedGrowthRank && growthDelta !== undefined) {
+    if (!resolvedGrowthRank) {
       const matchedGrowth = anonymousGrowthRankings.find(
-        (item) =>
-          item.delta === growthDelta &&
-          (item.rateDelta === undefined ||
-            growthRateDelta === undefined ||
-            Math.abs(item.rateDelta - growthRateDelta) < 0.05)
+        (item) => Math.abs(item.rateDelta - growthRateDelta) < 0.05
       );
       if (matchedGrowth) {
         resolvedGrowthRank = matchedGrowth.rank;
@@ -1653,16 +1621,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       totalScore: myActiveTestRecord.totalScore,
       totalMaxScore: myMax,
       scoreRate: myRate,
+      subjectCount,
+      averageScore,
       rank: resolvedRank,
       totalParticipants,
       classAverage: topScoreSummary?.topAverageScore,
       classAverageRate: topScoreSummary?.topAverageRate,
       classMax: topScoreSummary?.topMaxScore ?? myActiveTestRecord.totalScore,
       classMaxTotal: topScoreSummary?.topMaxTotal ?? myMax,
-      growthDelta,
       growthRateDelta,
-      hasDifferentMax,
       growthRank: resolvedGrowthRank,
+      baselineTestTitle,
     };
   }, [
     currentStudentNum,

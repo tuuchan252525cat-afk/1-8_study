@@ -50,6 +50,8 @@ export interface TestRecord {
   scores: SubjectScores;
   maxScores?: SubjectScores;
   subjectDetails?: SubjectScoreDetail[];
+  subjectCount?: number;
+  averageScore?: number;
   totalScore: number;
   totalMaxScore?: number;
   updatedAt?: string;
@@ -60,13 +62,15 @@ export interface AnonymousRankItem {
   score: number;
   maxScore?: number;
   scoreRate?: number;
+  subjectCount?: number;
+  averageScore?: number;
   isCurrentUser?: boolean; // Only used locally in user's highlight if configured, but public array contains NO student id
 }
 
 export interface AnonymousGrowthItem {
   rank: number;
-  delta: number; // e.g. +14
-  rateDelta?: number; // percentage-point change e.g. +4.5
+  rateDelta: number; // percentage-point change e.g. +12.5
+  delta?: number; // legacy optional field, never displayed
   hasDifferentMax?: boolean;
 }
 
@@ -99,16 +103,18 @@ export interface PersonalStanding {
   totalScore: number;
   totalMaxScore?: number;
   scoreRate?: number;
+  subjectCount?: number;
+  averageScore?: number;
   rank: number;
   totalParticipants: number;
   classAverage?: number;
   classAverageRate?: number;
   classMax?: number;
   classMaxTotal?: number;
-  growthDelta?: number;
   growthRateDelta?: number;
-  hasDifferentMax?: boolean;
   growthRank?: number;
+  baselineTestTitle?: string;
+  hasDifferentMax?: boolean;
 }
 
 export interface QuizQuestion {

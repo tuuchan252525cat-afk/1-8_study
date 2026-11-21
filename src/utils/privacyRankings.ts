@@ -18,12 +18,14 @@ export interface AnonymousRankEntry {
   score: number;
   maxScore?: number;
   scoreRate?: number;
+  subjectCount?: number;
+  averageScore?: number;
 }
 
 export interface AnonymousGrowthEntry {
   rank: number;
-  delta: number;
-  rateDelta?: number;
+  rateDelta: number;
+  delta?: number;
   hasDifferentMax?: boolean;
 }
 
@@ -70,6 +72,164 @@ export function calcRatePercent(score: number, maxScore?: number): number | unde
   return Math.round((score / maxScore) * 1000) / 10;
 }
 
+export interface RecordLike {
+  id?: string;
+  testTitle?: string;
+  testDate?: string;
+  totalScore: number;
+  totalMaxScore?: number;
+  subjectCount?: number;
+  averageScore?: number;
+  subjectDetails?: Array<{ maxScore?: number }>;
+  scores?: Record<string, number | undefined>;
+  maxScores?: Record<string, number | undefined>;
+}
+
+export function resolveRecordMaxScore(record: RecordLike): number {
+  if (typeof record.totalMaxScore === 'number' && record.totalMaxScore > 0) {
+    return record.totalMaxScore;
+  }
+  if (Array.isArray(record.subjectDetails) && record.subjectDetails.length > 0) {
+    const sum = record.subjectDetails.reduce((acc, d) => acc + (Number(d?.maxScore) || 100), 0);
+    if (sum > 0) return sum;
+  }
+  if (record.scores && typeof record.scores === 'object') {
+    const keys = Object.keys(record.scores).filter(
+      (k) => record.scores![k] !== undefined && record.scores![k] !== null
+    );
+    if (keys.length > 0) {
+      return keys.reduce((acc, k) => acc + (Number(record.maxScores?.[k] ?? 100) || 100), 0);
+    }
+  }
+  return 500;
+}
+
+export function getRecordSubjectCount(record: RecordLike): number {
+  if (typeof record.subjectCount === 'number' && record.subjectCount >= 1) {
+    return Math.floor(record.subjectCount);
+  }
+  if (Array.isArray(record.subjectDetails) && record.subjectDetails.length > 0) {
+    return record.subjectDetails.length;
+  }
+  if (record.scores && typeof record.scores === 'object') {
+    const count = Object.keys(record.scores).filter(
+      (k) => record.scores![k] !== undefined && record.scores![k] !== null
+    ).length;
+    if (count >= 1) return count;
+  }
+  const fallbackMax = resolveRecordMaxScore(record);
+  return Math.max(1, Math.round(fallbackMax / 100));
+}
+
+export function calcSubjectAverage(totalScore: number, subjectCount: number): number {
+  const safeCount = Math.max(1, subjectCount);
+  const val = Math.round((totalScore / safeCount) * 10) / 10;
+  return Object.is(val, -0) ? 0 : val;
+}
+
+export function getRecordSubjectAverage(record: RecordLike): number {
+  if (typeof record.averageScore === 'number' && Number.isFinite(record.averageScore)) {
+    return Math.round(record.averageScore * 10) / 10;
+  }
+  const count = getRecordSubjectCount(record);
+  return calcSubjectAverage(record.totalScore, count);
+}
+
+export function formatSignedRate(rate: number): string {
+  const rounded = Math.round(rate * 10) / 10;
+  const safe = Object.is(rounded, -0) || Math.abs(rounded) < 0.05 ? 0 : rounded;
+  const fixed = safe.toFixed(1);
+  return safe > 0 ? `+${fixed}%` : `${fixed}%`;
+}
+
+/**
+ * Finds the baseline test record with the lowest all-subject average score across
+ * all records for a single student. Ties break by lowest total score rate, then oldest date.
+ */
+export function findLowestAverageBaselineRecord<T extends RecordLike>(records: T[]): T | null {
+  if (!records || records.length === 0) return null;
+
+  let best = records[0];
+  let bestAvg = best.totalScore / Math.max(1, getRecordSubjectCount(best));
+  let bestRate = (best.totalScore / Math.max(1, resolveRecordMaxScore(best))) * 100;
+  let bestDate = best.testDate || '';
+
+  for (let i = 1; i < records.length; i++) {
+    const curr = records[i];
+    const currAvg = curr.totalScore / Math.max(1, getRecordSubjectCount(curr));
+    const currRate = (curr.totalScore / Math.max(1, resolveRecordMaxScore(curr))) * 100;
+    const currDate = curr.testDate || '';
+
+    if (currAvg < bestAvg - 1e-9) {
+      best = curr;
+      bestAvg = currAvg;
+      bestRate = currRate;
+      bestDate = currDate;
+    } else if (Math.abs(currAvg - bestAvg) <= 1e-9) {
+      if (currRate < bestRate - 1e-9) {
+        best = curr;
+        bestAvg = currAvg;
+        bestRate = currRate;
+        bestDate = currDate;
+      } else if (Math.abs(currRate - bestRate) <= 1e-9 && currDate < bestDate) {
+        best = curr;
+        bestAvg = currAvg;
+        bestRate = currRate;
+        bestDate = currDate;
+      }
+    }
+  }
+
+  return best;
+}
+
+/**
+ * Calculates total score-rate growth (percentage points) compared against the student's
+ * lowest all-subject average test record. Returns 0.0 when only 1 record exists or when
+ * the target record is itself the lowest-average baseline.
+ */
+export function calculateLowestAverageRateDelta<T extends RecordLike>(
+  targetRecord: T,
+  allStudentRecords: T[]
+): { rateDelta: number; baselineTestTitle: string | null } {
+  if (!allStudentRecords || allStudentRecords.length <= 1) {
+    return {
+      rateDelta: 0,
+      baselineTestTitle: targetRecord?.testTitle || null,
+    };
+  }
+
+  const baseline = findLowestAverageBaselineRecord(allStudentRecords);
+  if (!baseline) {
+    return { rateDelta: 0, baselineTestTitle: null };
+  }
+
+  const isSameRecord =
+    baseline === targetRecord ||
+    (Boolean(baseline.id) && Boolean(targetRecord.id) && baseline.id === targetRecord.id) ||
+    (Boolean(baseline.testTitle) &&
+      Boolean(targetRecord.testTitle) &&
+      baseline.testTitle === targetRecord.testTitle);
+
+  if (isSameRecord) {
+    return {
+      rateDelta: 0,
+      baselineTestTitle: baseline.testTitle || null,
+    };
+  }
+
+  const currMax = Math.max(1, resolveRecordMaxScore(targetRecord));
+  const baseMax = Math.max(1, resolveRecordMaxScore(baseline));
+  const currRate = (targetRecord.totalScore / currMax) * 100;
+  const baseRate = (baseline.totalScore / baseMax) * 100;
+  const rounded = Math.round((currRate - baseRate) * 10) / 10;
+
+  return {
+    rateDelta: Object.is(rounded, -0) || Math.abs(rounded) < 0.05 ? 0 : rounded,
+    baselineTestTitle: baseline.testTitle || null,
+  };
+}
+
 /**
  * Restricts a public ranking list strictly to TOP-N (rank <= limit, max `limit` items).
  */
@@ -97,7 +257,13 @@ export function limitTopGrowthRankings(
  * Guarantees strictly <= limit entries and rank <= limit.
  */
 export function calculateAnonymousRankingsFromEntries(
-  entries: Array<{ score: number; maxScore: number; scoreRate: number }>,
+  entries: Array<{
+    score: number;
+    maxScore: number;
+    scoreRate: number;
+    subjectCount?: number;
+    averageScore?: number;
+  }>,
   limit = PUBLIC_TOP_LIMIT
 ): AnonymousRankEntry[] {
   if (!entries || entries.length === 0) return [];
@@ -114,11 +280,20 @@ export function calculateAnonymousRankingsFromEntries(
       currentRank = i + 1;
     }
     if (currentRank > limit || result.length >= limit) break;
+    const item = sorted[i];
+    const resolvedAvg =
+      typeof item.averageScore === 'number'
+        ? Math.round(item.averageScore * 10) / 10
+        : typeof item.subjectCount === 'number' && item.subjectCount >= 1
+          ? calcSubjectAverage(item.score, item.subjectCount)
+          : undefined;
     result.push({
       rank: currentRank,
-      score: sorted[i].score,
-      maxScore: sorted[i].maxScore,
-      scoreRate: sorted[i].scoreRate,
+      score: item.score,
+      maxScore: item.maxScore,
+      scoreRate: item.scoreRate,
+      subjectCount: item.subjectCount,
+      averageScore: resolvedAvg,
     });
   }
   return result;
@@ -126,17 +301,14 @@ export function calculateAnonymousRankingsFromEntries(
 
 /**
  * Ranks already-anonymized top growth leaderboard entries fetched via server-side LIMIT.
+ * Strictly ranks by total score-rate growth (percentage points) only.
  */
 export function calculateAnonymousGrowthFromEntries(
-  entries: Array<{ delta: number; rateDelta: number; hasDifferentMax?: boolean }>,
+  entries: Array<{ rateDelta: number; delta?: number; hasDifferentMax?: boolean }>,
   limit = PUBLIC_TOP_LIMIT
 ): AnonymousGrowthEntry[] {
   if (!entries || entries.length === 0) return [];
-  const sorted = [...entries].sort((a, b) => {
-    const rateDiff = b.rateDelta - a.rateDelta;
-    if (Math.abs(rateDiff) > 1e-9) return rateDiff;
-    return b.delta - a.delta;
-  });
+  const sorted = [...entries].sort((a, b) => b.rateDelta - a.rateDelta);
 
   const result: AnonymousGrowthEntry[] = [];
   let currentRank = 1;
@@ -147,9 +319,7 @@ export function calculateAnonymousGrowthFromEntries(
     if (currentRank > limit || result.length >= limit) break;
     result.push({
       rank: currentRank,
-      delta: sorted[i].delta,
       rateDelta: sorted[i].rateDelta,
-      hasDifferentMax: sorted[i].hasDifferentMax,
     });
   }
   return result;
@@ -399,7 +569,7 @@ export function calculateAnonymousGrowthRankings(
     result.push({
       rank: currentRank,
       delta: deltas[i].delta,
-      rateDelta: deltas[i].rateDelta,
+      rateDelta: deltas[i].rateDelta ?? 0,
       hasDifferentMax: deltas[i].hasDifferentMax,
     });
   }

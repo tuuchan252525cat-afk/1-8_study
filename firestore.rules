@@ -92,7 +92,9 @@ service cloud.firestore {
           && request.resource.data.score >= 0
           && request.resource.data.maxScore is number
           && request.resource.data.maxScore >= 1
-          && request.resource.data.scoreRate is number;
+          && request.resource.data.scoreRate is number
+          && (!request.resource.data.keys().hasAny(['subjectCount']) || (request.resource.data.subjectCount is number && request.resource.data.subjectCount >= 1))
+          && (!request.resource.data.keys().hasAny(['averageScore']) || (request.resource.data.averageScore is number && request.resource.data.averageScore >= 0));
         allow delete: if isValidId(testId) && isValidId(entryId);
       }
     }
@@ -110,8 +112,7 @@ service cloud.firestore {
         allow read: if true;
         allow create, update: if isValidId(testId) && isValidId(entryId)
           && !request.resource.data.keys().hasAny(['studentNumber', 'attendanceNumber', 'nickname', 'name'])
-          && request.resource.data.keys().hasAll(['delta', 'rateDelta'])
-          && request.resource.data.delta is number
+          && request.resource.data.keys().hasAll(['rateDelta'])
           && request.resource.data.rateDelta is number;
         allow delete: if isValidId(testId) && isValidId(entryId);
       }

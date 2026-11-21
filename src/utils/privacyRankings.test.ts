@@ -6,6 +6,11 @@ import {
   calculateAnonymousGrowthRankings,
   calculatePersonalGrowth,
   calculateDistribution,
+  calcSubjectAverage,
+  findLowestAverageBaselineRecord,
+  calculateLowestAverageRateDelta,
+  calculateAnonymousGrowthFromEntries,
+  formatSignedRate,
 } from './privacyRankings.js';
 
 test('calculateAnonymousRankings returns strictly rank and score with NO user identifier', () => {
@@ -19,7 +24,6 @@ test('calculateAnonymousRankings returns strictly rank and score with NO user id
   const rankings = calculateAnonymousRankings(mockScores);
 
   assert.equal(rankings.length, 4);
-  // Verify strictly NO studentNumber property
   for (const item of rankings) {
     assert.equal('studentNumber' in item, false);
     assert.equal('nickname' in item, false);
@@ -27,17 +31,12 @@ test('calculateAnonymousRankings returns strictly rank and score with NO user id
     assert.equal(typeof item.score, 'number');
   }
 
-  // 95 and 95 should both be rank 1
   assert.equal(rankings[0].rank, 1);
   assert.equal(rankings[0].score, 95);
   assert.equal(rankings[1].rank, 1);
   assert.equal(rankings[1].score, 95);
-
-  // 85 should be rank 3 (standard competition ranking: 1, 1, 3, 4)
   assert.equal(rankings[2].rank, 3);
   assert.equal(rankings[2].score, 85);
-
-  // 70 should be rank 4
   assert.equal(rankings[3].rank, 4);
   assert.equal(rankings[3].score, 70);
 });
@@ -57,7 +56,7 @@ test('calculatePersonalStanding returns private standing only for the target stu
   assert.equal(standing.classMax, 90);
   assert.equal(standing.classMin, 70);
   assert.equal(standing.classAverage, 80);
-  assert.equal(standing.percentile, 67); // (3 - 2 + 1)/3 = 66.7% => 67%
+  assert.equal(standing.percentile, 67);
 });
 
 test('calculateAnonymousGrowthRankings outputs rank and delta with NO identities', () => {
@@ -67,9 +66,9 @@ test('calculateAnonymousGrowthRankings outputs rank and delta with NO identities
     { studentNumber: 3, score: 90 },
   ];
   const curr = [
-    { studentNumber: 1, score: 88 }, // +18
-    { studentNumber: 2, score: 85 }, // +5
-    { studentNumber: 3, score: 88 }, // -2
+    { studentNumber: 1, score: 88 },
+    { studentNumber: 2, score: 85 },
+    { studentNumber: 3, score: 88 },
   ];
 
   const growthList = calculateAnonymousGrowthRankings(prev, curr);
@@ -90,8 +89,8 @@ test('calculatePersonalGrowth outputs personal growth stats for target student',
     { studentNumber: 2, score: 80 },
   ];
   const curr = [
-    { studentNumber: 1, score: 88 }, // +18
-    { studentNumber: 2, score: 85 }, // +5
+    { studentNumber: 1, score: 88 },
+    { studentNumber: 2, score: 85 },
   ];
 
   const growth = calculatePersonalGrowth(prev, curr, 1);
@@ -110,4 +109,62 @@ test('calculateDistribution generates proper histogram frequency counts', () => 
 
   const topBucket = distribution.find((b) => b.range === '90 - 100点');
   assert.equal(topBucket?.count, 2);
+});
+
+test('calcSubjectAverage and formatSignedRate round to 1 decimal place cleanly', () => {
+  assert.equal(calcSubjectAverage(680, 8), 85.0);
+  assert.equal(calcSubjectAverage(400, 6), 66.7);
+  assert.equal(formatSignedRate(12.5), '+12.5%');
+  assert.equal(formatSignedRate(0), '0.0%');
+  assert.equal(formatSignedRate(-0.01), '0.0%');
+  assert.equal(formatSignedRate(-2.0), '-2.0%');
+});
+
+test('findLowestAverageBaselineRecord picks lowest average and breaks ties by lowest rate then oldest date', () => {
+  const records = [
+    { id: 'r1', testTitle: '1学期期末', testDate: '2026-07-01', totalScore: 400, totalMaxScore: 500, subjectCount: 5 }, // avg 80, rate 80%
+    { id: 'r2', testTitle: '1学期中間', testDate: '2026-05-20', totalScore: 350, totalMaxScore: 500, subjectCount: 5 }, // avg 70, rate 70%
+    { id: 'r3', testTitle: '2学期中間', testDate: '2026-10-15', totalScore: 560, totalMaxScore: 900, subjectCount: 8 }, // avg 70, rate 62.2%
+  ];
+  const baseline = findLowestAverageBaselineRecord(records);
+  assert.equal(baseline?.id, 'r3');
+
+  // Same average and same rate -> oldest date wins
+  const tied = [
+    { id: 't2', testTitle: '後', testDate: '2026-10-01', totalScore: 350, totalMaxScore: 500, subjectCount: 5 },
+    { id: 't1', testTitle: '先', testDate: '2026-05-01', totalScore: 350, totalMaxScore: 500, subjectCount: 5 },
+  ];
+  assert.equal(findLowestAverageBaselineRecord(tied)?.id, 't1');
+});
+
+test('calculateLowestAverageRateDelta returns 0 for single or baseline test and rate diff otherwise', () => {
+  const single = [{ id: 'a', testTitle: 'Test A', testDate: '2026-05-01', totalScore: 350, totalMaxScore: 500, subjectCount: 5 }];
+  assert.equal(calculateLowestAverageRateDelta(single[0], single).rateDelta, 0);
+
+  const r1 = { id: 'a', testTitle: 'Test A', testDate: '2026-05-01', totalScore: 350, totalMaxScore: 500, subjectCount: 5 }; // avg 70, 70%
+  const r2 = { id: 'b', testTitle: 'Test B', testDate: '2026-07-01', totalScore: 680, totalMaxScore: 800, subjectCount: 8 }; // avg 85, 85%
+  const r3 = { id: 'c', testTitle: 'Test C', testDate: '2026-10-01', totalScore: 400, totalMaxScore: 500, subjectCount: 5 }; // avg 80, 80%
+  const all = [r1, r2, r3];
+
+  assert.equal(calculateLowestAverageRateDelta(r1, all).rateDelta, 0);
+  assert.equal(calculateLowestAverageRateDelta(r2, all).rateDelta, 15);
+  assert.equal(calculateLowestAverageRateDelta(r3, all).rateDelta, 10);
+});
+
+test('calculateAnonymousGrowthFromEntries sorts strictly by rateDelta without requiring delta', () => {
+  const ranked = calculateAnonymousGrowthFromEntries([
+    { rateDelta: 5.2 },
+    { rateDelta: 15.0 },
+    { rateDelta: 15.0 },
+    { rateDelta: 0.0 },
+  ]);
+  assert.equal(ranked.length, 4);
+  assert.equal(ranked[0].rank, 1);
+  assert.equal(ranked[0].rateDelta, 15.0);
+  assert.equal('delta' in ranked[0], false);
+  assert.equal(ranked[1].rank, 1);
+  assert.equal(ranked[2].rank, 3);
+  assert.equal(ranked[2].rateDelta, 5.2);
+  assert.equal(ranked[3].rank, 4);
+  assert.equal(ranked[3].rateDelta, 0.0);
 });

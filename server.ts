@@ -322,8 +322,65 @@ function getServerRecordMaxScore(r: any): number {
   return 500;
 }
 
+function getServerRecordSubjectCount(r: any): number {
+  if (typeof r?.subjectCount === 'number' && r.subjectCount >= 1) {
+    return Math.floor(r.subjectCount);
+  }
+  if (Array.isArray(r?.subjectDetails) && r.subjectDetails.length > 0) {
+    return r.subjectDetails.length;
+  }
+  if (r?.scores && typeof r.scores === 'object') {
+    const count = Object.keys(r.scores).filter(
+      (k) => r.scores[k] !== undefined && r.scores[k] !== null
+    ).length;
+    if (count >= 1) return count;
+  }
+  return Math.max(1, Math.round(getServerRecordMaxScore(r) / 100));
+}
+
+function calcServerSubjectAverage(score: number, subjectCount: number): number {
+  const val = Math.round((score / Math.max(1, subjectCount)) * 10) / 10;
+  return Object.is(val, -0) ? 0 : val;
+}
+
 function calcServerRate(score: number, maxScore: number): number {
   return Math.round((score / Math.max(1, maxScore)) * 1000) / 10;
+}
+
+function findServerLowestAverageBaseline(records: any[]): any | null {
+  if (!records || records.length === 0) return null;
+  let best = records[0];
+  let bestAvg = (Number(best.totalScore) || 0) / Math.max(1, getServerRecordSubjectCount(best));
+  let bestRate = ((Number(best.totalScore) || 0) / Math.max(1, getServerRecordMaxScore(best))) * 100;
+  let bestDate = String(best.testDate || '');
+
+  for (let i = 1; i < records.length; i++) {
+    const curr = records[i];
+    const currScore = Number(curr.totalScore) || 0;
+    const currAvg = currScore / Math.max(1, getServerRecordSubjectCount(curr));
+    const currRate = (currScore / Math.max(1, getServerRecordMaxScore(curr))) * 100;
+    const currDate = String(curr.testDate || '');
+
+    if (currAvg < bestAvg - 1e-9) {
+      best = curr;
+      bestAvg = currAvg;
+      bestRate = currRate;
+      bestDate = currDate;
+    } else if (Math.abs(currAvg - bestAvg) <= 1e-9) {
+      if (currRate < bestRate - 1e-9) {
+        best = curr;
+        bestAvg = currAvg;
+        bestRate = currRate;
+        bestDate = currDate;
+      } else if (Math.abs(currRate - bestRate) <= 1e-9 && currDate < bestDate) {
+        best = curr;
+        bestAvg = currAvg;
+        bestRate = currRate;
+        bestDate = currDate;
+      }
+    }
+  }
+  return best;
 }
 
 // 1. Get server-persisted data (testRecords strictly scoped to requesting studentNumber)
@@ -375,11 +432,18 @@ app.get('/api/data/rankings', (req, res) => {
       const score = Number(r.totalScore) || 0;
       const maxScore = getServerRecordMaxScore(r);
       const scoreRate = calcServerRate(score, maxScore);
+      const subjectCount = getServerRecordSubjectCount(r);
+      const averageScore =
+        typeof r.averageScore === 'number' && Number.isFinite(r.averageScore)
+          ? Math.round(r.averageScore * 10) / 10
+          : calcServerSubjectAverage(score, subjectCount);
       return {
         studentNumber: Number(r.studentNumber),
         score,
         maxScore,
         scoreRate,
+        subjectCount,
+        averageScore,
       };
     });
 
@@ -388,15 +452,26 @@ app.get('/api/data/rankings', (req, res) => {
       return b.score - a.score;
     });
 
-    const topRankings: Array<{ rank: number; score: number; maxScore: number; scoreRate: number }> = [];
+    const topRankings: Array<{
+      rank: number;
+      score: number;
+      maxScore: number;
+      scoreRate: number;
+      subjectCount: number;
+      averageScore: number;
+    }> = [];
     let currentRank = 1;
     let myRank: number | null = null;
+    let mySubjectCount: number | null = null;
+    let myAverageScore: number | null = null;
     for (let i = 0; i < scored.length; i++) {
       if (i > 0 && scored[i].scoreRate < scored[i - 1].scoreRate - 1e-9) {
         currentRank = i + 1;
       }
       if (Number.isFinite(studentNumber) && scored[i].studentNumber === studentNumber) {
         myRank = currentRank;
+        mySubjectCount = scored[i].subjectCount;
+        myAverageScore = scored[i].averageScore;
       }
       if (currentRank <= topLimit && topRankings.length < topLimit) {
         topRankings.push({
@@ -404,56 +479,56 @@ app.get('/api/data/rankings', (req, res) => {
           score: scored[i].score,
           maxScore: scored[i].maxScore,
           scoreRate: scored[i].scoreRate,
+          subjectCount: scored[i].subjectCount,
+          averageScore: scored[i].averageScore,
         });
       }
     }
 
-    // Compute growth against each student's latest prior test
-    const otherRecords = allRecords
-      .filter((r: any) => r?.testTitle !== testTitle)
-      .sort((a: any, b: any) => String(a?.testDate || '').localeCompare(String(b?.testDate || '')));
-    const latestPrevByStudent = new Map<number, any>();
-    otherRecords.forEach((r: any) => {
-      if (r?.studentNumber !== undefined) latestPrevByStudent.set(Number(r.studentNumber), r);
+    // Compute growth against each student's lowest all-subject average test across ALL records
+    const recordsByStudent = new Map<number, any[]>();
+    allRecords.forEach((r: any) => {
+      if (r?.studentNumber !== undefined) {
+        const num = Number(r.studentNumber);
+        const list = recordsByStudent.get(num) || [];
+        list.push(r);
+        recordsByStudent.set(num, list);
+      }
     });
 
     const growthItems: Array<{
       studentNumber: number;
-      delta: number;
       rateDelta: number;
-      hasDifferentMax: boolean;
     }> = [];
     scored.forEach((curr) => {
-      const prev = latestPrevByStudent.get(curr.studentNumber);
-      if (prev) {
-        const prevScore = Number(prev.totalScore) || 0;
-        const prevMax = getServerRecordMaxScore(prev);
-        const prevRate = calcServerRate(prevScore, prevMax);
-        growthItems.push({
-          studentNumber: curr.studentNumber,
-          delta: curr.score - prevScore,
-          rateDelta: Math.round((curr.scoreRate - prevRate) * 10) / 10,
-          hasDifferentMax: prevMax !== curr.maxScore,
-        });
+      const studentRecords = recordsByStudent.get(curr.studentNumber) || [];
+      let rateDelta = 0;
+      if (studentRecords.length > 1) {
+        const baseline = findServerLowestAverageBaseline(studentRecords);
+        if (baseline && baseline.testTitle !== testTitle) {
+          const baseScore = Number(baseline.totalScore) || 0;
+          const baseMax = Math.max(1, getServerRecordMaxScore(baseline));
+          const currExactRate = (curr.score / Math.max(1, curr.maxScore)) * 100;
+          const baseExactRate = (baseScore / baseMax) * 100;
+          const rounded = Math.round((currExactRate - baseExactRate) * 10) / 10;
+          rateDelta = Object.is(rounded, -0) || Math.abs(rounded) < 0.05 ? 0 : rounded;
+        }
       }
+      growthItems.push({
+        studentNumber: curr.studentNumber,
+        rateDelta,
+      });
     });
 
-    growthItems.sort((a, b) => {
-      if (Math.abs(b.rateDelta - a.rateDelta) > 1e-9) return b.rateDelta - a.rateDelta;
-      return b.delta - a.delta;
-    });
+    growthItems.sort((a, b) => b.rateDelta - a.rateDelta);
 
     const topGrowthRankings: Array<{
       rank: number;
-      delta: number;
       rateDelta: number;
-      hasDifferentMax: boolean;
     }> = [];
     let growthRank = 1;
     let myGrowthRank: number | null = null;
-    let myGrowthDelta: number | null = null;
     let myGrowthRateDelta: number | null = null;
-    let myHasDifferentMax = false;
 
     for (let i = 0; i < growthItems.length; i++) {
       if (i > 0 && growthItems[i].rateDelta < growthItems[i - 1].rateDelta - 1e-9) {
@@ -461,16 +536,12 @@ app.get('/api/data/rankings', (req, res) => {
       }
       if (Number.isFinite(studentNumber) && growthItems[i].studentNumber === studentNumber) {
         myGrowthRank = growthRank;
-        myGrowthDelta = growthItems[i].delta;
         myGrowthRateDelta = growthItems[i].rateDelta;
-        myHasDifferentMax = growthItems[i].hasDifferentMax;
       }
       if (growthRank <= topLimit && topGrowthRankings.length < topLimit) {
         topGrowthRankings.push({
           rank: growthRank,
-          delta: growthItems[i].delta,
           rateDelta: growthItems[i].rateDelta,
-          hasDifferentMax: growthItems[i].hasDifferentMax,
         });
       }
     }
@@ -484,9 +555,9 @@ app.get('/api/data/rankings', (req, res) => {
         ? {
             myRank,
             growthRank: myGrowthRank,
-            growthDelta: myGrowthDelta,
             growthRateDelta: myGrowthRateDelta,
-            hasDifferentMax: myHasDifferentMax,
+            subjectCount: mySubjectCount,
+            averageScore: myAverageScore,
           }
         : null,
     });

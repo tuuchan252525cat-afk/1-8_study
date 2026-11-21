@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { PUBLIC_TOP_LIMIT } from '../utils/privacyRankings';
+import { PUBLIC_TOP_LIMIT, calcSubjectAverage, formatSignedRate } from '../utils/privacyRankings';
 import { TrendingUp, Award, Edit3, Lock, BookOpen } from 'lucide-react';
 
 interface Props {
@@ -16,13 +16,22 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
     personalStanding.totalMaxScore !== undefined ||
     personalStanding.rank > 0 ||
     personalStanding.totalScore > 0;
-  const growthDelta = personalStanding.growthDelta ?? 0;
-  const isPositiveGrowth = growthDelta > 0;
+  const growthRateDelta = personalStanding.growthRateDelta ?? 0;
+  const isPositiveGrowth = growthRateDelta > 0.05;
+  const isNegativeGrowth = growthRateDelta < -0.05;
   const totalMaxScore = personalStanding.totalMaxScore || 500;
   const scoreRate =
     personalStanding.scoreRate !== undefined
       ? personalStanding.scoreRate
       : Math.round((personalStanding.totalScore / totalMaxScore) * 1000) / 10;
+  const averageScore =
+    personalStanding.averageScore !== undefined
+      ? personalStanding.averageScore
+      : calcSubjectAverage(
+          personalStanding.totalScore,
+          personalStanding.subjectCount || Math.max(1, Math.round(totalMaxScore / 100))
+        );
+  const averageScoreLabel = averageScore.toFixed(1);
 
   const rankDisplay = personalStanding.rank > 0 ? `${personalStanding.rank}位` : '集計中';
   const totalCount = Math.max(personalStanding.totalParticipants, hasScore ? 1 : 0);
@@ -79,7 +88,7 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
             <Lock className="w-4 h-4 text-[#1c603a] shrink-0" />
             <span>
               あなたの記録：<span className="text-[#1c603a] text-base">{personalStanding.totalScore}点</span>
-              （現在 <span className="text-[#1c603a]">{rankDisplay}</span> / 記録数 {totalCount}件中）
+              （現在 <span className="text-[#1c603a]">{rankDisplay}</span> / 記録数 {totalCount}件中 · 全教科平均：<span className="text-[#1c603a]">{averageScoreLabel}点</span>）
             </span>
           </div>
           {personalStanding.rank > PUBLIC_TOP_LIMIT && (
@@ -122,18 +131,18 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
             </div>
           </div>
 
-          {/* Card 2: 成長度 */}
+          {/* Card 2: 成長度（最低平均点比） */}
           <div className="bg-[#fdfbf7] rounded-2xl p-4 border border-stone-200/80 shadow-2xs flex flex-col justify-between">
             <div className="flex items-center justify-between text-xs text-stone-500 mb-2">
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-700">
                   <TrendingUp className="w-4 h-4" />
                 </div>
-                <span className="font-black text-slate-800 text-xs">成長度 (前回比)</span>
+                <span className="font-black text-slate-800 text-xs">成長度（最低平均点比）</span>
               </div>
               {personalStanding.growthRank && (
                 <span className="text-[11px] font-extrabold text-[#1c603a]">
-                  伸び率 {personalStanding.growthRank}位
+                  上昇率 {personalStanding.growthRank}位
                 </span>
               )}
             </div>
@@ -143,30 +152,16 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
                   className={`text-3xl font-black tabular-nums ${
                     isPositiveGrowth
                       ? 'text-[#1c603a]'
-                      : growthDelta < 0
+                      : isNegativeGrowth
                       ? 'text-rose-600'
                       : 'text-slate-800'
                   }`}
                 >
-                  {isPositiveGrowth ? `+${growthDelta}` : growthDelta}
+                  {formatSignedRate(growthRateDelta)}
                 </span>
-                <span className="text-xs font-black text-slate-600">
-                  {isPositiveGrowth ? '点アップ' : '点'}
-                </span>
-                {personalStanding.growthRateDelta !== undefined && (
-                  <span className="text-[11px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md tabular-nums">
-                    得点率 {personalStanding.growthRateDelta > 0 ? `+${personalStanding.growthRateDelta}` : personalStanding.growthRateDelta}%
-                  </span>
-                )}
               </div>
               <p className="text-[11px] text-stone-500 mt-1.5 font-bold line-clamp-1">
-                {personalStanding.hasDifferentMax && personalStanding.growthRateDelta !== undefined
-                  ? `◎ 満点の違いを考慮し得点率（${personalStanding.growthRateDelta > 0 ? `+${personalStanding.growthRateDelta}` : personalStanding.growthRateDelta}%）で比較しています`
-                  : isPositiveGrowth
-                  ? '◎ 素晴らしい成長です！実力が定着しています'
-                  : growthDelta < 0
-                  ? '◎ 苦手分野を振り返って次回さらに伸ばしましょう'
-                  : '◎ 安定した成績を維持しています'}
+                ◎ 最低全教科平均点の回との比較（総合得点率）
               </p>
             </div>
           </div>
@@ -193,7 +188,10 @@ export const PersonalStandingCard: React.FC<Props> = ({ onOpenScoreInput }) => {
                   / {totalMaxScore}点満点
                 </span>
               </div>
-              <div className="text-[11px] text-stone-500 font-bold mt-1.5 flex items-center gap-1.5 tabular-nums">
+              <div className="text-[11px] text-[#1c603a] font-black mt-1 tabular-nums">
+                全教科平均：{averageScoreLabel}点
+              </div>
+              <div className="text-[11px] text-stone-500 font-bold mt-0.5 flex items-center gap-1.5 tabular-nums">
                 {personalStanding.classAverage !== undefined && (
                   <>
                     <span>TOP {PUBLIC_TOP_LIMIT}平均: {personalStanding.classAverage}点</span>

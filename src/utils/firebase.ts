@@ -24,6 +24,9 @@ import {
   AnonymousRankEntry,
   AnonymousGrowthEntry,
   calcRatePercent,
+  calcSubjectAverage,
+  getRecordSubjectCount,
+  resolveRecordMaxScore,
   calculateAnonymousRankingsFromEntries,
   calculateAnonymousGrowthFromEntries,
 } from './privacyRankings';
@@ -977,37 +980,24 @@ export function toOpaqueLeaderboardEntryId(testTitle: string, studentNumber: num
 }
 
 function getRecordMaxForLeaderboard(record: TestRecord): number {
-  if (typeof record.totalMaxScore === 'number' && record.totalMaxScore > 0) {
-    return record.totalMaxScore;
-  }
-  if (Array.isArray(record.subjectDetails) && record.subjectDetails.length > 0) {
-    const sum = record.subjectDetails.reduce((acc, d) => acc + (Number(d.maxScore) || 100), 0);
-    if (sum > 0) return sum;
-  }
-  if (record.scores) {
-    const keys = Object.keys(record.scores).filter(
-      (k) => record.scores[k] !== undefined && record.scores[k] !== null
-    );
-    if (keys.length > 0) {
-      return keys.reduce((acc, k) => acc + (Number(record.maxScores?.[k] ?? 100) || 100), 0);
-    }
-  }
-  return 500;
+  return resolveRecordMaxScore(record);
 }
 
 /**
- * Mirrors a single TestRecord (plus optional growth delta) to the anonymous
+ * Mirrors a single TestRecord (plus optional rate-based growth delta) to the anonymous
  * per-test leaderboard subcollections so public TOP-N queries never touch PII.
  */
 export async function syncTestRecordToAnonymousLeaderboards(
   record: TestRecord,
-  growthInfo?: { delta: number; rateDelta: number; hasDifferentMax: boolean } | null
+  growthInfo?: { rateDelta: number } | null
 ): Promise<void> {
   if (!record?.testTitle || record.studentNumber === undefined) return;
   const testId = toTestLeaderboardId(record.testTitle);
   const opaqueId = toOpaqueLeaderboardEntryId(record.testTitle, record.studentNumber);
   const maxScore = Math.max(1, getRecordMaxForLeaderboard(record));
   const scoreRate = calcRatePercent(record.totalScore, maxScore) ?? 0;
+  const subjectCount = getRecordSubjectCount(record);
+  const averageScore = calcSubjectAverage(record.totalScore, subjectCount);
   const nowIso = record.updatedAt || new Date().toISOString();
 
   await setDoc(
@@ -1026,12 +1016,14 @@ export async function syncTestRecordToAnonymousLeaderboards(
       score: record.totalScore,
       maxScore,
       scoreRate,
+      subjectCount,
+      averageScore,
       updatedAt: nowIso,
     }),
     { merge: true }
   );
 
-  if (growthInfo) {
+  if (growthInfo && typeof growthInfo.rateDelta === 'number') {
     await setDoc(
       doc(db, COLLECTIONS.GROWTH_LEADERBOARDS, testId),
       sanitizeForFirestore({
@@ -1045,9 +1037,7 @@ export async function syncTestRecordToAnonymousLeaderboards(
     await setDoc(
       doc(db, COLLECTIONS.GROWTH_LEADERBOARDS, testId, 'entries', opaqueId),
       sanitizeForFirestore({
-        delta: growthInfo.delta,
         rateDelta: growthInfo.rateDelta,
-        hasDifferentMax: Boolean(growthInfo.hasDifferentMax),
         updatedAt: nowIso,
       }),
       { merge: true }
@@ -1058,11 +1048,11 @@ export async function syncTestRecordToAnonymousLeaderboards(
 /**
  * Saves or updates a student's own test score record in Firebase Firestore
  * (`testRecords` collection) and updates their anonymous entry in `testLeaderboards`
- * (and `growthLeaderboards` when prior test history exists).
+ * (and `growthLeaderboards`).
  */
 export async function saveTestRecordToCloud(
   record: TestRecord,
-  growthInfo?: { delta: number; rateDelta: number; hasDifferentMax: boolean } | null
+  growthInfo?: { rateDelta: number } | null
 ): Promise<void> {
   try {
     const docId = toSafeFirestoreId(record.id);
@@ -1187,14 +1177,32 @@ export async function fetchPublicTopLeaderboard(
       limit(limitCount)
     );
     const snap = await getDocs(q);
-    const entries: Array<{ score: number; maxScore: number; scoreRate: number }> = [];
+    const entries: Array<{
+      score: number;
+      maxScore: number;
+      scoreRate: number;
+      subjectCount?: number;
+      averageScore?: number;
+    }> = [];
     snap.forEach((d) => {
       const data = d.data();
       if (typeof data.score === 'number' && typeof data.maxScore === 'number' && typeof data.scoreRate === 'number') {
+        const subjectCount =
+          typeof data.subjectCount === 'number' && data.subjectCount >= 1
+            ? Math.floor(data.subjectCount)
+            : undefined;
+        const averageScore =
+          typeof data.averageScore === 'number'
+            ? data.averageScore
+            : subjectCount
+              ? calcSubjectAverage(data.score, subjectCount)
+              : undefined;
         entries.push({
           score: data.score,
           maxScore: data.maxScore,
           scoreRate: data.scoreRate,
+          subjectCount,
+          averageScore,
         });
       }
     });
@@ -1224,14 +1232,32 @@ export function subscribeToPublicTopLeaderboard(
     return onSnapshot(
       q,
       (snapshot) => {
-        const entries: Array<{ score: number; maxScore: number; scoreRate: number }> = [];
+        const entries: Array<{
+          score: number;
+          maxScore: number;
+          scoreRate: number;
+          subjectCount?: number;
+          averageScore?: number;
+        }> = [];
         snapshot.forEach((d) => {
           const data = d.data();
           if (typeof data.score === 'number' && typeof data.maxScore === 'number' && typeof data.scoreRate === 'number') {
+            const subjectCount =
+              typeof data.subjectCount === 'number' && data.subjectCount >= 1
+                ? Math.floor(data.subjectCount)
+                : undefined;
+            const averageScore =
+              typeof data.averageScore === 'number'
+                ? data.averageScore
+                : subjectCount
+                  ? calcSubjectAverage(data.score, subjectCount)
+                  : undefined;
             entries.push({
               score: data.score,
               maxScore: data.maxScore,
               scoreRate: data.scoreRate,
+              subjectCount,
+              averageScore,
             });
           }
         });
@@ -1263,14 +1289,12 @@ export async function fetchPublicTopGrowthLeaderboard(
       limit(limitCount)
     );
     const snap = await getDocs(q);
-    const entries: Array<{ delta: number; rateDelta: number; hasDifferentMax?: boolean }> = [];
+    const entries: Array<{ rateDelta: number }> = [];
     snap.forEach((d) => {
       const data = d.data();
-      if (typeof data.delta === 'number' && typeof data.rateDelta === 'number') {
+      if (typeof data.rateDelta === 'number') {
         entries.push({
-          delta: data.delta,
           rateDelta: data.rateDelta,
-          hasDifferentMax: Boolean(data.hasDifferentMax),
         });
       }
     });
@@ -1300,14 +1324,12 @@ export function subscribeToPublicTopGrowthLeaderboard(
     return onSnapshot(
       q,
       (snapshot) => {
-        const entries: Array<{ delta: number; rateDelta: number; hasDifferentMax?: boolean }> = [];
+        const entries: Array<{ rateDelta: number }> = [];
         snapshot.forEach((d) => {
           const data = d.data();
-          if (typeof data.delta === 'number' && typeof data.rateDelta === 'number') {
+          if (typeof data.rateDelta === 'number') {
             entries.push({
-              delta: data.delta,
               rateDelta: data.rateDelta,
-              hasDifferentMax: Boolean(data.hasDifferentMax),
             });
           }
         });
